@@ -1,0 +1,7 @@
+# Phase 1 — synthetic data generation + data-quality tests.
+# Later phases append their own deps (prophet / statsmodels, simpy,
+# python-pptx, plotly). See FLAGSHIP_SPEC.md Section 3 for the full stack.
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.7
+pytest>=7.4
