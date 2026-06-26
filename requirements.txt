@@ -9,3 +9,6 @@ pytest>=7.4
 # Phase 2 — forecasting (Prophet primary, statsmodels SARIMA fallback).
 prophet>=1.1
 statsmodels>=0.14
+
+# Phase 4 — discrete-event simulation to validate Erlang C.
+simpy>=4.0
