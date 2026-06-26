@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+
+# Large / regenerable data — never commit the raw dataset
+data/raw/*.csv
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Keep the empty raw/ folder tracked
+!data/raw/.gitkeep
