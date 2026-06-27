@@ -29,3 +29,8 @@ DEFLECTION_RATE = 0.20        # ASSUMPTION: 20% of deflectable contacts self-ser
 # IROP stress scenario: a major disruption day multiplies contact volume and
 # lengthens handle time (the reason mix shifts toward longer IROP_Rebooking).
 IROP_VOLUME_MULTIPLIER = 2.5  # ASSUMPTION: ~2.5x contact volume on an IROP day
+
+# Realistic (less-naive) staffing baseline: a center running fixed shifts staffs each
+# shift to its peak interval (no intraday flexing) — the "vs realistic" savings comparison,
+# distinct from the naive "peak headcount every interval, 24/7" baseline.
+REALISTIC_BASELINE_BLOCK_HOURS = 8  # ASSUMPTION: 8h shift blocks for the realistic baseline

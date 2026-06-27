@@ -121,18 +121,37 @@ def agent_hours(scheduled) -> float:
 
 
 def cost_summary(plan: pd.DataFrame) -> dict:
-    """Optimized vs naive flat baseline (peak-staffed every interval)."""
+    """Optimized vs two baselines:
+      - NAIVE flat: peak headcount in every interval, 24/7 (the strawman).
+      - REALISTIC: each fixed shift block staffed to that block's peak interval (no intraday
+        flexing) — what a center running fixed shifts without WFM would do.
+    """
     opt_hours = agent_hours(plan["scheduled_agents"])
+    saved = lambda base: base - opt_hours
+    cost = config.AGENT_HOURLY_COST
+
     peak_scheduled = int(plan["scheduled_agents"].max())
     flat_hours = peak_scheduled * len(plan) * INTERVAL_HOURS
-    saved_hours = flat_hours - opt_hours
+
+    block_hours = config.REALISTIC_BASELINE_BLOCK_HOURS
+    intervals_per_block = block_hours * (60 // config.INTERVAL_MINUTES)
+    block = plan["interval_index"] // intervals_per_block
+    realistic_sched = plan.groupby([plan["date"], block])["scheduled_agents"].transform("max")
+    realistic_hours = agent_hours(realistic_sched)
+
     return {
-        "opt_hours": opt_hours, "flat_hours": flat_hours, "peak_scheduled": peak_scheduled,
-        "saved_hours": saved_hours,
-        "opt_cost": opt_hours * config.AGENT_HOURLY_COST,
-        "flat_cost": flat_hours * config.AGENT_HOURLY_COST,
-        "saved_dollars": saved_hours * config.AGENT_HOURLY_COST,
-        "pct_reduction": saved_hours / flat_hours if flat_hours else 0.0,
+        "opt_hours": opt_hours, "opt_cost": opt_hours * cost,
+        "peak_scheduled": peak_scheduled,
+        # naive flat baseline
+        "flat_hours": flat_hours, "flat_cost": flat_hours * cost,
+        "saved_hours": saved(flat_hours), "saved_dollars": saved(flat_hours) * cost,
+        "pct_reduction": saved(flat_hours) / flat_hours if flat_hours else 0.0,
+        # realistic shift-block baseline
+        "block_hours": block_hours,
+        "realistic_hours": realistic_hours, "realistic_cost": realistic_hours * cost,
+        "realistic_saved_hours": saved(realistic_hours),
+        "realistic_saved_dollars": saved(realistic_hours) * cost,
+        "realistic_pct_reduction": saved(realistic_hours) / realistic_hours if realistic_hours else 0.0,
     }
 
 
@@ -173,21 +192,25 @@ def plot_savings(cost, deflect_cost, path):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    labels = ["Flat baseline\n(peak-staffed)", "Optimized\n(Erlang C)", "Optimized\n+ deflection"]
-    costs = [cost["flat_cost"], cost["opt_cost"], deflect_cost]
-    colors = ["#c8102e", "#1b2a4a", "#0f7a3d"]
-    x = np.arange(3)
-    fig, ax = plt.subplots(figsize=(8, 5))
-    bars = ax.bar(x, costs, color=colors, width=0.6)
-    for b, c in zip(bars, costs):
-        ax.annotate(f"${c/1000:,.0f}k", (b.get_x() + b.get_width() / 2, c),
+    labels = ["Naive flat\n(peak 24/7)", f"Realistic\n({cost['block_hours']}h shifts)",
+              "Optimized\n(Erlang C)", "Optimized\n+ deflection"]
+    costs = [cost["flat_cost"], cost["realistic_cost"], cost["opt_cost"], deflect_cost]
+    colors = ["#c8102e", "#d4a017", "#1b2a4a", "#0f7a3d"]
+    x = np.arange(len(costs))
+    fig, ax = plt.subplots(figsize=(9.5, 5.5))
+    bars = ax.bar(x, costs, color=colors, width=0.62)
+    for b, val in zip(bars, costs):
+        # escape $ so matplotlib does not treat it as mathtext
+        ax.annotate(f"\\${val:,.0f}", (b.get_x() + b.get_width() / 2, val),
                     ha="center", va="bottom", fontsize=9)
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
-    ax.set_ylabel(f"Agent cost over horizon (${config.AGENT_HOURLY_COST:.0f}/h)")
-    ax.set_title(f"Cost vs naive flat staffing — {cost['pct_reduction']*100:.0f}% reduction, "
-                 f"${cost['saved_dollars']/1000:,.0f}k saved")
-    ax.set_ylim(0, max(costs) * 1.15)
+    ax.set_ylabel(f"Agent cost over horizon (\\${config.AGENT_HOURLY_COST:.0f}/h)")
+    ax.set_title(f"Cost vs baselines — {cost['pct_reduction']*100:.0f}% vs naive "
+                 f"(\\${cost['saved_dollars']:,.0f} saved), "
+                 f"{cost['realistic_pct_reduction']*100:.0f}% vs realistic "
+                 f"(\\${cost['realistic_saved_dollars']:,.0f} saved)")
+    ax.set_ylim(0, max(costs) * 1.18)
     ax.grid(True, axis="y", alpha=0.25)
     fig.tight_layout()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -271,12 +294,16 @@ def _print_summary(r: dict, plan: pd.DataFrame) -> None:
           f"IROP x{config.IROP_VOLUME_MULTIPLIER:g}")
     print("-" * 72)
     print("AGENT-HOURS over the horizon:")
-    print(f"  Flat baseline (naive: {c['peak_scheduled']} agents every interval, incl. overnight): "
+    print(f"  Naive flat baseline   ({c['peak_scheduled']} agents every interval, 24/7): "
           f"{c['flat_hours']:>11,.0f} h  -> ${c['flat_cost']:>13,.0f}")
-    print(f"  Optimized  (Erlang C, interval-by-interval)                  : "
+    print(f"  Realistic baseline    ({c['block_hours']}h shifts -> each shift's peak)   : "
+          f"{c['realistic_hours']:>11,.0f} h  -> ${c['realistic_cost']:>13,.0f}")
+    print(f"  Optimized             (Erlang C, interval-by-interval)  : "
           f"{c['opt_hours']:>11,.0f} h  -> ${c['opt_cost']:>13,.0f}")
-    print(f"  >>> SAVINGS: {c['saved_hours']:,.0f} agent-hours = "
-          f"${c['saved_dollars']:,.0f}  ({c['pct_reduction']*100:.1f}% reduction)")
+    print(f"  >>> SAVINGS vs NAIVE flat: {c['saved_hours']:>9,.0f} h = "
+          f"${c['saved_dollars']:>12,.0f}  ({c['pct_reduction']*100:.1f}% reduction)")
+    print(f"  >>> SAVINGS vs REALISTIC : {c['realistic_saved_hours']:>9,.0f} h = "
+          f"${c['realistic_saved_dollars']:>12,.0f}  ({c['realistic_pct_reduction']*100:.1f}% reduction)")
     print("-" * 72)
     print("SERVICE QUALITY:")
     print(f"  Optimized: sized so every interval meets >= {config.TARGET_SL*100:.0f}% by "
