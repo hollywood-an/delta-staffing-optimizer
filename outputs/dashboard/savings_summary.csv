@@ -1,0 +1,5 @@
+scenario,agent_hours,cost,SL
+Naive flat (peak 24/7),133920.0,3348000.0,0.9992
+Realistic (8h shifts),79352.0,1983800.0,0.983
+Optimized (Erlang C),44989.0,1124725.0,0.8798
+Optimized + deflection,40266.0,1006650.0,0.8661

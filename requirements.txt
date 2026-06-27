@@ -12,3 +12,6 @@ statsmodels>=0.14
 
 # Phase 4 — discrete-event simulation to validate Erlang C.
 simpy>=4.0
+
+# Phase 6 — self-contained Plotly dashboard (fallback for Tableau Public).
+plotly>=5.20
