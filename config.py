@@ -16,3 +16,16 @@ AGENT_HOURLY_COST = 25.0      # $/hour, loaded cost (assumption — cite it)
 
 # Base demand
 BASE_DAILY_CONTACTS = 12000   # average contacts on a normal day
+
+# ----------------------------------------------------------------------------
+# Phase 5 — business-case ASSUMPTIONS (every value here is an assumption;
+# outputs label them as such so a reviewer can change one number and re-run).
+# ----------------------------------------------------------------------------
+# Self-service deflection: a share of app-handleable contact types shifts to
+# the Fly Delta app, removing that volume from the phone queue.
+DEFLECTABLE_REASONS = ["Booking_Change", "Seat_Upgrade", "SkyMiles"]  # ASSUMPTION
+DEFLECTION_RATE = 0.20        # ASSUMPTION: 20% of deflectable contacts self-serve
+
+# IROP stress scenario: a major disruption day multiplies contact volume and
+# lengthens handle time (the reason mix shifts toward longer IROP_Rebooking).
+IROP_VOLUME_MULTIPLIER = 2.5  # ASSUMPTION: ~2.5x contact volume on an IROP day
