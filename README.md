@@ -5,8 +5,9 @@
 > discrete-event **simulation**, and quantify the cost savings vs. naive flat staffing.
 > Built phase by phase per [`FLAGSHIP_SPEC.md`](FLAGSHIP_SPEC.md).
 >
-> **Status:** Phase 1 (synthetic data generation) complete. This README is a stub — Phase 8
-> expands it with the architecture diagram, dashboard link, and headline results.
+> **Status:** Phases 1–6 complete (data → forecast → Erlang C → simulation → optimization →
+> dashboard). This README is a stub — Phase 8 expands it with the architecture diagram, dashboard
+> link, and headline results.
 
 ## Data & modeling assumptions
 
@@ -41,6 +42,19 @@ methodology — the forecaster learns whatever seasonality is present, so furthe
 has diminishing returns. Deferred for that reason: a fully passenger-shaped seasonal curve (an
 earlier ~early-July summer peak, an early-December passenger lull) and additional travel-holiday
 notches (July 4, Memorial Day, Labor Day, New Year).
+
+## Dashboard
+A self-contained **Plotly dashboard** — [`outputs/dashboard/dashboard.html`](outputs/dashboard/dashboard.html)
+(opens offline) — shows four views: the volume forecast (actual vs forecast + 95% band), a
+weekday × hour staffing **heatmap**, KPI tiles (service level, ASA, occupancy, $ saved), and the
+contact reason mix. It's backed by four pre-aggregated CSVs in `outputs/dashboard/`
+(`daily_volume`, `interval_staffing`, `reason_mix`, `savings_summary`).
+
+Tableau Public is the spec's primary BI target, but it can't be set up in a headless build — it's
+an interactive desktop + cloud app that needs manual authoring and a user account to publish. The
+CSVs are Tableau-ready: to build and publish the same dashboard yourself, follow
+[`outputs/dashboard/TABLEAU_GUIDE.md`](outputs/dashboard/TABLEAU_GUIDE.md), then paste the public
+link here.
 
 ## Reproduce (Phase 1)
 ```bash
