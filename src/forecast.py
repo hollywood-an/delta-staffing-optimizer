@@ -8,7 +8,10 @@ Predict future contact volume so we can staff *ahead* of demand, at two grains:
 
 We produce the **baseline** ("expected normal") forecast. Random IROP surges are, by
 construction, unknowable in advance, so they are NOT forecast here — they are handled as a
-separate stress scenario in Phase 5. The held-out test window is the last 30 days, which for
+separate stress scenario in Phase 5. IROP days are also blanked out of the TRAINING data (set
+to NaN, which Prophet treats as missing): left in, their 2-3x spikes inflate the 95% band ~4x
+(the lower bound went below zero) and describe weather disruption rather than normal-day
+uncertainty. The held-out test window is the last 30 days, which for
 this dataset is December: it contains the Christmas holiday spike and the pre-Christmas
 booking surge, neither learnable from a single year of history (Christmas falls in the
 holdout), so holiday/IROP test days are expected to be worse than normal days.
@@ -130,7 +133,7 @@ def _forecast_prophet(train: pd.DataFrame, periods: int) -> pd.DataFrame:
         # explicit yearly term made Prophet conflate trend with the single yearly pass and
         # over-predict December by ~40% (normal-day MAPE 19-51%); without it the WEEKLY
         # pattern + a flexible trend dominate the 30-60 day horizon and normal-day MAPE drops
-        # to ~9%. US holidays are added so the model knows the (in-training) Thanksgiving spike.
+        # under 10%. US holidays are added so the model knows the (in-training) Thanksgiving spike.
         model = Prophet(
             weekly_seasonality=True,
             yearly_seasonality="auto",
@@ -228,8 +231,15 @@ def run_forecast(backend: str = "auto") -> dict:
     train_last = train["ds"].max()
     last_data = daily["ds"].max()
 
-    print(f"Fitting forecast model (train={len(train)} days, holdout={TEST_DAYS} days)...")
-    backend, oos = make_forecast(train, TEST_DAYS + FUTURE_DAYS, backend=backend)
+    # Baseline = normal operations: blank IROP days to NaN (not dropped, so the date grid — and
+    # therefore the forecast start — is unchanged; Prophet and SARIMAX both treat NaN as missing).
+    train_fit = train.copy()
+    irop_train = train_fit["ds"].map(irop_by_date).fillna(False).to_numpy(dtype=bool)
+    train_fit.loc[irop_train, "y"] = np.nan
+
+    print(f"Fitting forecast model (train={len(train)} days, {int(irop_train.sum())} IROP days "
+          f"excluded; holdout={TEST_DAYS} days)...")
+    backend, oos = make_forecast(train_fit, TEST_DAYS + FUTURE_DAYS, backend=backend)
     oos["yhat_lower"] = oos["yhat_lower"].clip(lower=0)
 
     # Align predictions with actuals on the test window.

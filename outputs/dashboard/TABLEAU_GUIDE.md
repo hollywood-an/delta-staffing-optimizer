@@ -15,7 +15,7 @@ In Tableau Public Desktop → **Connect → To a File → Text file**, add these
 - `outputs/dashboard/interval_staffing.csv`
 - `outputs/dashboard/reason_mix.csv`
 - `outputs/dashboard/savings_summary.csv`
-- `data/processed/staffing_plan.csv`  ← needed for the heatmap (see the note in view 2)
+- `data/processed/staffing_plan.csv`  ← needed for the heatmap and KPI tiles (see views 2 and 3)
 
 Tableau auto-detects `date` as a Date and the numeric columns as Measures.
 
@@ -38,14 +38,23 @@ Tableau auto-detects `date` as a Date and the numeric columns as Measures.
 - **Marks:** Square; **Color** = `AVG([Required Agents])` (use a sequential palette like Orange/Red).
 - Result: the "looks-like-real-WFM" grid — hot midday/afternoon, cool overnight.
 
-### View 3 — KPI tiles  (sources: `interval_staffing.csv` + `savings_summary.csv`)
-Make one small text/number worksheet per KPI:
-- **Service level** = `AVG([SL])`  (format %), from `interval_staffing.csv`.
-- **Occupancy** = `AVG([occupancy])` (format %), from `interval_staffing.csv`.
-- **ASA** = pull from `staffing_plan.csv` `AVG([Predicted Asa Seconds])` (interval_staffing omits ASA).
-- **$ saved vs naive** = from `savings_summary.csv`: `SUM(cost)` where `scenario = "Naive flat (peak 24/7)"`
-  minus `SUM(cost)` where `scenario = "Optimized (Erlang C)"` (a calculated field, or just show the
-  cost-by-scenario bar).
+### View 3 — KPI tiles  (sources: `staffing_plan.csv` + `savings_summary.csv`)
+> Don't use plain `AVG()` for these — it weights a 3am interval with 4 contacts the same as the
+> 4pm peak with 600, which understates occupancy (68.6% vs 87.2%) and overstates ASA (14.3s vs 7.9s).
+> The formulas below weight by volume and match the numbers in `dashboard.html`.
+
+Make one small text/number worksheet per KPI (calculated fields on `staffing_plan.csv`):
+- **Service level** = `SUM([Predicted Sl] * [Volume]) / SUM([Volume])`  (format %) → 87.8%
+- **ASA** = `SUM([Predicted Asa Seconds] * [Volume]) / SUM([Volume])`  (format 0.0 "s") → 7.9s
+- **Occupancy** = `SUM([Offered Load Erlangs]) / SUM([Required Agents])`  (format %) → 87.2%
+- **$ saved vs realistic** = from `savings_summary.csv`:
+  `SUM(IF [Scenario] = "Realistic (8h shifts)" THEN [Cost] END) - SUM(IF [Scenario] = "Optimized (Erlang C)" THEN [Cost] END)`
+  → $845,238. Lead with this one: the naive baseline (peak headcount 24/7) is a strawman no real
+  center runs, so "vs realistic 8h shifts" is the defensible headline. (Swap in
+  `"Naive flat (peak 24/7)"` for the $2,418,238 comparison, or just show the cost-by-scenario bar.)
+
+Tableau auto-cleans column names (`predicted_sl` → `Predicted Sl`); if yours kept the raw names,
+use those inside the brackets instead.
 
 ### View 4 — Reason-mix bar  (source: `reason_mix.csv`)
 - **Columns:** `reason`   **Rows:** `SUM([contacts])`; sort descending.

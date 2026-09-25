@@ -169,7 +169,7 @@ def build_exports():
         {"scenario": "Optimized + deflection", "agent_hours": def_hours,
          "SL": _vw(plan_def, "predicted_sl")},
     ])
-    savings["agent_hours"] = savings["agent_hours"].round(0)
+    savings["agent_hours"] = savings["agent_hours"].round(1)   # half-hour grid -> x.5 hours
     savings["cost"] = (savings["agent_hours"] * config.AGENT_HOURLY_COST).round(0)  # reconciles
     savings["SL"] = savings["SL"].round(4)
     savings = savings[["scenario", "agent_hours", "cost", "SL"]]
@@ -211,7 +211,7 @@ def _build_figure(daily_volume, plan, reason_mix, kpis):
         subplot_titles=("", "", "", "",
                         "Daily contact volume — actual vs forecast (95% band)",
                         "Required agents — weekday × hour-of-day",
-                        "Contact reason mix"))
+                        "Contact reason mix (contacts, full year)"))
 
     navy, red = "#1b2a4a", "#c8102e"
     # --- KPI tiles ---
@@ -227,9 +227,13 @@ def _build_figure(daily_volume, plan, reason_mix, kpis):
     fig.add_trace(go.Indicator(mode="number", value=kpis["occupancy"] * 100,
         number={"suffix": "%", "valueformat": ".0f"}, title={"text": "Occupancy"}),
         row=1, col=3)
-    fig.add_trace(go.Indicator(mode="number", value=kpis["saved_vs_naive"],
+    # Headline = vs the realistic 8h-shift baseline; the naive peak-24/7 strawman is secondary.
+    fig.add_trace(go.Indicator(mode="number", value=kpis["saved_vs_realistic"],
         number={"prefix": "$", "valueformat": ",.0f"},
-        title={"text": "Saved vs naive (30d)"}), row=1, col=4)
+        title={"text": f"Saved vs {config.REALISTIC_BASELINE_BLOCK_HOURS}h shifts (30d)<br>"
+                       f"<span style='font-size:0.7em;color:#666'>"
+                       f"${kpis['saved_vs_naive']:,.0f} vs naive peak 24/7</span>"}),
+        row=1, col=4)
 
     # --- forecast line + band ---
     dv = daily_volume.copy()
@@ -246,10 +250,15 @@ def _build_figure(daily_volume, plan, reason_mix, kpis):
                              name="Forecast"), row=2, col=1)
 
     # --- staffing heatmap ---
+    # Heatmap is narrowed to x<=0.42 so its colour bar sits in the gap before the reason chart
+    # (at 0.46 it overlapped that chart's axis labels); Monday on top reads Mon->Sun.
     fig.add_trace(go.Heatmap(z=grid.to_numpy(), x=[f"{h:02d}:00" for h in range(24)],
                              y=WEEKDAYS, colorscale="YlOrRd",
-                             colorbar={"title": "agents", "len": 0.32, "y": 0.16, "x": 0.46}),
+                             colorbar={"title": "agents", "len": 0.32, "y": 0.16, "x": 0.43,
+                                       "thickness": 14}),
                   row=3, col=1)
+    fig.update_xaxes(domain=[0, 0.42], row=3, col=1)
+    fig.update_yaxes(autorange="reversed", row=3, col=1)
 
     # --- reason-mix bar ---
     fig.add_trace(go.Bar(x=reason_mix["reason"], y=reason_mix["contacts"], marker_color=navy,
@@ -257,12 +266,11 @@ def _build_figure(daily_volume, plan, reason_mix, kpis):
                          textposition="outside", name="Contacts", showlegend=False), row=3, col=3)
 
     fig.update_yaxes(title_text="contacts/day", row=2, col=1)
-    fig.update_yaxes(title_text="contacts", row=3, col=3)
     fig.update_xaxes(tickangle=-30, row=3, col=3)
-    fig.update_layout(
+    fig.update_layout(   # no fixed width: fills the browser window (see build_html)
         title={"text": "Delta ATL Reservations — Staffing & Service-Level Dashboard "
                        "<sub>(synthetic data; Plotly fallback for Tableau)</sub>", "x": 0.5},
-        height=1080, width=1500, showlegend=True,
+        height=1080, autosize=True, showlegend=True,
         legend={"orientation": "h", "y": 0.81, "yanchor": "middle", "x": 0.5, "xanchor": "center"},
         margin={"t": 90, "b": 40}, font={"family": "Helvetica, Arial, sans-serif"})
     return fig
@@ -271,7 +279,8 @@ def _build_figure(daily_volume, plan, reason_mix, kpis):
 def build_html(daily_volume, plan, reason_mix, kpis, path=HTML_PATH):
     fig = _build_figure(daily_volume, plan, reason_mix, kpis)
     path.parent.mkdir(parents=True, exist_ok=True)
-    fig.write_html(str(path), include_plotlyjs=True, full_html=True)
+    fig.write_html(str(path), include_plotlyjs=True, full_html=True,
+                   default_width="100%", default_height="1080px", config={"responsive": True})
     return path
 
 
@@ -287,7 +296,9 @@ def run_dashboard():
     print("-" * 64)
     print("KPIs (optimized plan, volume-weighted):")
     print(f"  service level {kpis['service_level']*100:.1f}% | ASA {kpis['asa']:.1f}s | "
-          f"occupancy {kpis['occupancy']*100:.0f}% | saved vs naive ${kpis['saved_vs_naive']:,.0f}")
+          f"occupancy {kpis['occupancy']*100:.0f}%")
+    print(f"  saved vs realistic ${kpis['saved_vs_realistic']:,.0f} | "
+          f"saved vs naive ${kpis['saved_vs_naive']:,.0f}")
     print("Reason mix (top):")
     for _, r in reason_mix.head(3).iterrows():
         print(f"  {r['reason']:<16} {int(r['contacts']):>9,} contacts | "
