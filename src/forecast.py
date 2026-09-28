@@ -21,6 +21,7 @@ Run:  python -m src.forecast
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import os
 import sys
@@ -40,6 +41,7 @@ from src.generate_data import RAW_CSV_PATH, _holiday_factor  # noqa: E402
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 FORECAST_CSV = PROCESSED_DIR / "forecast.csv"
 INTRADAY_CSV = PROCESSED_DIR / "intraday_profile.csv"
+METRICS_JSON = PROCESSED_DIR / "forecast_metrics.json"   # test-set accuracy, read by the deck
 FIG_PATH = PROJECT_ROOT / "outputs" / "figures" / "forecast.png"
 
 TEST_DAYS = 30          # held-out test window (per spec: the last ~30 days)
@@ -273,6 +275,7 @@ def run_forecast(backend: str = "auto") -> dict:
     out[["date", "forecast", "forecast_lower", "forecast_upper", "actual", "segment"]].to_csv(
         FORECAST_CSV, index=False)
     profile.to_csv(INTRADAY_CSV, index=False)
+    METRICS_JSON.write_text(json.dumps(metrics, indent=2))
     _plot(daily, oos, train_last, last_data, backend, metrics["mape_normal"])
 
     _print_summary(daily, train, test, oos, profile, metrics, train_last, last_data)
@@ -309,7 +312,7 @@ def _print_summary(daily, train, test, oos, profile, m, train_last, last_data):
     print(f"Busiest interval          : {profile.loc[profile['fraction'].idxmax(),'interval_start']} "
           f"({profile['fraction'].max()*100:.1f}% of a day)")
     print(f"Wrote                     : {FORECAST_CSV.relative_to(PROJECT_ROOT)}, "
-          f"{INTRADAY_CSV.relative_to(PROJECT_ROOT)}")
+          f"{INTRADAY_CSV.relative_to(PROJECT_ROOT)}, {METRICS_JSON.relative_to(PROJECT_ROOT)}")
     print(f"                            {FIG_PATH.relative_to(PROJECT_ROOT)}")
     print("=" * 64)
 

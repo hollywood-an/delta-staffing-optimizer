@@ -1,0 +1,11 @@
+{
+  "backend": "prophet",
+  "mape_all": 16.24222320506602,
+  "rmse_all": 3710.656150131231,
+  "mape_normal": 9.674897383559331,
+  "rmse_normal": 1653.744521968647,
+  "n_test": 30,
+  "n_normal": 24,
+  "n_holiday": 6,
+  "n_irop": 0
+}

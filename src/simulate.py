@@ -31,6 +31,7 @@ import config  # noqa: E402
 from src.erlang import service_level, average_speed_of_answer, occupancy  # noqa: E402
 
 FIG_PATH = PROJECT_ROOT / "outputs" / "figures" / "validation.png"
+VALIDATION_CSV = PROJECT_ROOT / "data" / "processed" / "validation.csv"   # read by the deck
 DEFAULT_AHT = 180.0
 DEFAULT_TARGET = float(config.TARGET_ANSWER_SECONDS)   # 20s ("80/20")
 
@@ -234,7 +235,9 @@ def main() -> None:
           f"({N_REPLICATIONS} reps x {N_CONTACTS:,} contacts, {WARMUP:,} warm-up each)...")
     rows = validate()
     fig = plot_validation(rows)
-    print(f"Saved {fig.relative_to(PROJECT_ROOT)}")
+    import pandas as pd
+    pd.DataFrame(rows).round(4).to_csv(VALIDATION_CSV, index=False)
+    print(f"Saved {fig.relative_to(PROJECT_ROOT)}, {VALIDATION_CSV.relative_to(PROJECT_ROOT)}")
 
 
 if __name__ == "__main__":

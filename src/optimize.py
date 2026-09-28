@@ -16,6 +16,7 @@ Run:  python -m src.optimize
 """
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -37,6 +38,7 @@ PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 FORECAST_CSV = PROCESSED_DIR / "forecast.csv"
 INTRADAY_CSV = PROCESSED_DIR / "intraday_profile.csv"
 STAFFING_CSV = PROCESSED_DIR / "staffing_plan.csv"
+SUMMARY_JSON = PROCESSED_DIR / "optimize_summary.json"   # savings / IROP / deflection, read by the deck
 FIG_DIR = PROJECT_ROOT / "outputs" / "figures"
 
 INTERVALS_PER_DAY = 24 * 60 // config.INTERVAL_MINUTES        # 48
@@ -206,10 +208,12 @@ def plot_savings(cost, deflect_cost, path):
     ax.set_xticks(x)
     ax.set_xticklabels(labels)
     ax.set_ylabel(f"Agent cost over horizon (\\${config.AGENT_HOURLY_COST:.0f}/h)")
-    ax.set_title(f"Cost vs baselines — {cost['pct_reduction']*100:.0f}% vs naive "
-                 f"(\\${cost['saved_dollars']:,.0f} saved), "
-                 f"{cost['realistic_pct_reduction']*100:.0f}% vs realistic "
-                 f"(\\${cost['realistic_saved_dollars']:,.0f} saved)")
+    ax.yaxis.set_major_formatter(lambda v, _: f"\\${v / 1e6:.1f}M")   # not a bare "1e6" offset
+    # Lead with the realistic 8h-shift comparison; the naive peak-24/7 strawman is secondary.
+    ax.set_title(f"Cost vs baselines — {cost['realistic_pct_reduction']*100:.0f}% vs "
+                 f"{cost['block_hours']}h shifts (\\${cost['realistic_saved_dollars']:,.0f} saved), "
+                 f"{cost['pct_reduction']*100:.0f}% vs naive "
+                 f"(\\${cost['saved_dollars']:,.0f} saved)")
     ax.set_ylim(0, max(costs) * 1.18)
     ax.grid(True, axis="y", alpha=0.25)
     fig.tight_layout()
@@ -278,6 +282,7 @@ def run_optimize() -> dict:
         "opt_min_sl": opt_min_sl, "opt_mean_occ": opt_mean_occ,
         "flat_occ_min": flat_occ_min, "flat_occ_mean": flat_occ_mean, "flat_occ_max": flat_occ_max,
     }
+    SUMMARY_JSON.write_text(json.dumps(results, indent=2))
     _print_summary(results, plan)
     return results
 
@@ -331,6 +336,7 @@ def _print_summary(r: dict, plan: pd.DataFrame) -> None:
     print("  Recommendation: pre-positioned flex capacity + self-service deflection for IROP days.")
     print("-" * 72)
     print(f"Wrote {STAFFING_CSV.relative_to(PROJECT_ROOT)} ({len(plan):,} interval rows), "
+          f"{SUMMARY_JSON.relative_to(PROJECT_ROOT)}, "
           f"{(FIG_DIR/'staffing_curve.png').relative_to(PROJECT_ROOT)}, "
           f"{(FIG_DIR/'savings.png').relative_to(PROJECT_ROOT)}")
     print("=" * 72)
