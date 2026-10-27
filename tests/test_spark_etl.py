@@ -1,7 +1,8 @@
 """Spark ETL — schema, row counts, read rules, and the data-quality invariants on the Parquet output.
 
-The fixture runs src/spark_etl.py on the full data/raw/contacts.csv (generated once with the
-seeded defaults if missing, like tests/test_data_quality.py) into a temp directory, then checks
+The shared `spark_etl_full` fixture (conftest.py) runs src/spark_etl.py on the full
+data/raw/contacts.csv (generated once with the seeded defaults if missing, like
+tests/test_data_quality.py) into a temp directory, then this file checks
 the cleaned Parquet it wrote. The invariants mirror tests/test_data_quality.py rule for rule, so
 the curated layer is held to the same standard as the raw CSV. They are evaluated in Spark:
 reading 4.7M rows of Parquet into pandas would need pyarrow, which the project doesn't install.
@@ -39,12 +40,8 @@ EXPECTED_PARQUET_TYPES = {
 
 
 @pytest.fixture(scope="module")
-def etl(spark, tmp_path_factory):           # `spark`: the shared session from conftest.py
-    if not RAW_CSV_PATH.exists():
-        write_contacts(generate_contacts(), RAW_CSV_PATH)
-    tmp = tmp_path_factory.mktemp("spark_etl")
-    result = spark_etl.run_etl(RAW_CSV_PATH, tmp / "contacts.parquet", tmp / "spark", spark=spark)
-    return {"parquet": tmp / "contacts.parquet", "result": result}
+def etl(spark_etl_full):                    # one full-data ETL run per session (conftest.py)
+    return spark_etl_full
 
 
 @pytest.fixture(scope="module")

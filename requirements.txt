@@ -26,6 +26,9 @@ orjson==3.11.9          # Plotly writes the dashboard JSON with orjson when it's
 # Phase 7 — executive deck generator.
 python-pptx==1.0.2
 
+# Data catalog (metadata/catalog.yaml -> src/catalog.py, DATA_DICTIONARY.md).
+PyYAML==6.0.3
+
 # Spark ETL path (src/spark_etl.py) — needs a Java runtime on PATH or JAVA_HOME (tested: JDK 25).
 pyspark==4.2.0
 py4j==0.10.9.9          # pyspark's Python<->JVM bridge (its only dependency) — pinned too
