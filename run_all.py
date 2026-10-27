@@ -71,6 +71,7 @@ def validate(engine: str) -> None:
     gx_python = Path(os.environ.get("STAFFING_GX_PYTHON", root / ".venv-gx" / "bin" / "python"))
     if not gx_python.exists():
         sys.exit(f"--validate needs the data-quality venv: run `make gx-install` ({gx_python} not found)")
+    sys.stdout.flush()                   # keep the log in order when stdout is a file
     code = subprocess.run([str(gx_python), "-m", "src.quality", "--engine", engine], cwd=root).returncode
     if code:
         sys.exit(code)

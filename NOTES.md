@@ -1,4 +1,4 @@
-# Engineering notes — Spark + Airflow path
+# Engineering notes — Spark + Airflow path, data quality and lineage
 
 Working notes for the distributed-computing path added on top of the original pandas
 pipeline. The pandas path (`python run_all.py`) is unchanged and remains the reference.
@@ -373,3 +373,210 @@ against future releases.
    layer, exact-equality engine parity and fail-fast read rules. Each new check was confirmed by
    fault injection (**16 of 16 seeded defects caught**), and both engines were verified to
    reproduce every output from a clean environment.
+
+---
+
+# Data quality, lineage and metadata
+
+Added on top of the Spark + Airflow work, in four phases (one commit each). Everything is additive:
+`python run_all.py` behaves exactly as before, and all 15 reproducible outputs are byte-identical.
+
+## Phase 1 — Data catalog and lineage (`metadata/catalog.yaml`, `src/catalog.py`)
+
+- **`metadata/catalog.yaml`** is the single source of truth for all **24 datasets** the pipeline
+  reads or writes: 1 raw, 6 interim, 6 processed, 11 outputs. For each dataset it records:
+  - id, path, layer, format, and whether it's committed;
+  - the producing task, the consuming tasks (or `terminal`), and the stages that read it on the
+    pandas engine;
+  - grain, primary key and a row-count rule;
+  - every column's type, unit, allowed values or range, nullability and description. JSON files
+    list their fields as dotted paths, e.g. `cost.opt_hours`.
+- **Rules name constants instead of repeating numbers** (`FUTURE_DAYS * INTERVALS_PER_DAY`,
+  `TARGET_SL`, …). The 16 constants are checked against the code they mirror (`config.py`,
+  `src/forecast.py`, `src/generate_data.py`, `src/simulate.py`, the existing tests).
+- **`src/catalog.py`** uses only the standard library and PyYAML, so the Airflow and GX venvs import
+  it too. It:
+  - validates structure and references, and evaluates rules with a small arithmetic-only parser;
+  - derives dataset → task → dataset lineage (plus task → task gates) and checks it is acyclic;
+  - renders `DATA_DICTIONARY.md` (30 KB, one table per dataset plus a Mermaid lineage graph) and
+    a compact lineage graph inside README markers. Both are deterministic, and tests fail if
+    either is stale.
+- **Lineage follows the DAG**, which runs the Spark engine. On the pandas engine, forecast, optimize
+  and dashboard read `contacts.csv` directly; that's recorded per dataset.
+- **`tests/test_catalog.py` (36):**
+  - schema drift against the real files a run produces: committed outputs in place, a 200k-row
+    sample of `contacts.csv`, and the Spark interim layer from the shared full-data ETL fixture;
+  - producer/consumer/terminal rules and acyclic lineage;
+  - catalog tasks = DAG tasks, and the DAG runs every producer before its consumers. The DAG is
+    parsed by Airflow itself through `.venv-airflow`, with a throwaway `AIRFLOW_HOME`;
+  - the dictionary and README graph are current.
+- **New pin:** `PyYAML==6.0.3` (a dry run showed it adds only itself; the Airflow venv already has
+  6.0.3).
+
+## Phase 2 — Validation framework (`src/quality.py`, Great Expectations)
+
+**Great Expectations vs pandera:** GX 1.24.1 worked on the first honest attempt, so pandera wasn't
+needed.
+
+**Where it's installed:** its own `.venv-gx` (`requirements-gx.txt`, all 38 packages pinned from a
+tested `pip freeze`, `make gx-install`). By your rule it would have gone in the project `.venv`: a
+dry run there added 24 new packages and moved no pin. But I found and reproduced a concrete hazard:
+- GX imports PySpark's Spark Connect module when pyspark is installed.
+- PySpark 4.2.0's `pyspark/sql/connect/utils.py` has a doctest guess that calls **`sys.exit(0)`**
+  whenever the main module has no `__file__` and no `__spec__`, i.e. any `python -c "import
+  great_expectations; ..."`.
+- So the process ends with a *success* code before anything is validated. Scripts, `python -m`,
+  pytest and Airflow tasks aren't affected, but a gate that can silently exit 0 is exactly what
+  this layer exists to prevent.
+
+The validator only reads files, so it needs neither pyspark nor the pipeline's other packages.
+`.venv-gx` uses the same pandas 3.0.3 and numpy 2.4.6 pins, so files parse identically, plus
+pyarrow 26.0.0 to read Parquet. A test guards the `python -c` case.
+
+**No telemetry:** GX sends anonymous usage statistics by default. `src/quality.py` sets
+`GX_ANALYTICS_ENABLED=False` before importing it. In a smoke test with all sockets blocked, a full
+validation made **0 network attempts**.
+
+**The suites:** parameters come from the catalog, plus hand-written semantic checks.
+
+| Suite | Expectations | Highlights |
+|---|---:|---|
+| raw | 39 | your 11 `test_data_quality.py` invariants, labelled DQ-1…DQ-11 (37 expectations mirror them), plus catalog rules (allowed sets, ranges, `CT-` pattern) |
+| interim (Spark) | 70 | catalog rules on the Parquet and all 5 aggregates; the Parquet keeps every raw row; daily totals, reason counts and `n_contacts` equal the raw rows; fractions sum to 1 within 1e-9; every artifact at least as new as its input |
+| processed | 164 | the forecast covers exactly the expected dates with no gaps or repeats (30 test + 30 future); bounds ordered; fractions sum to 1 within 1e-9; 1,440 staffing slots, unique (date, slot), agents ≥ 1, scheduled ≥ required, service level ≥ 0.80, occupancy ≤ 0.90, the plan covers exactly the forecast's future dates; simulation within 3 pts of Erlang C |
+| outputs | 75 | the summary's agent-hours, peak, both baselines, costs, savings and % vs what `staffing_plan.csv` implies; savings CSV hours, costs and SL vs the summary and plan; `interval_staffing.csv` vs the plan's means, rounded the dashboard's way; the dashboard's 4 KPI tiles vs the plan and summary; `daily_volume.csv` dates and forecast columns vs `forecast.csv`; reason-mix total vs daily actuals |
+
+That's 348 expectations on the Spark engine and 278 on pandas.
+
+**Decisions**
+- **Gates vs warnings:** every expectation gates (exit 1, each failure printed with its observed
+  value) except one warning: normal-day MAPE under the spec's 10% target. Accuracy isn't
+  correctness, so a less accurate forecast shouldn't stop the pipeline.
+- **No KPI CSV exists.** The KPI tiles live only in `dashboard.html`, so the outputs suite reads them
+  from the figure data embedded there (the last `Plotly.newPlot` call; earlier occurrences are
+  inside the bundled plotly.js). A Plotly upgrade that changed that layout would make the check
+  fail loudly, never pass silently.
+- **Freshness** means "each artifact is at least as new as its input" (file modification times),
+  not wall-clock age. Reports show pass/fail only, never the timestamps.
+- **The derived invariants aren't re-run on the Parquet.** The interim suite applies the catalog's
+  rules (nulls, sets, ranges, key, row band) plus reconciliation. `tests/test_spark_etl.py`
+  already mirrors all 11 invariants on the Parquet at development time.
+- **Rounded values:** when a file stores a rounded value, the check rounds the expected value the
+  same way and then requires equality within 1e-9. My first version used a ±half-unit tolerance;
+  it failed on the 17:00 SL, which sits exactly on that boundary, and was the wrong design.
+- **Committed vs generated:**
+  - `outputs/quality/latest.md` (raw, processed, outputs; 42 KB) and `latest_interim.md`
+    (Spark only; 11 KB) are deterministic: no timestamps, run ids or absolute paths. They're
+    byte-identical across runs and across engines, and a test fails if they're stale.
+  - Per-run JSON, the trend, GX's working project and **Data Docs** are generated on demand and
+    git-ignored, because they embed timestamps and run ids. Open the docs with
+    `open outputs/quality/data_docs/index.html`; they're about 4 MB.
+  - GX's own project files contain generated ids, so the suites are defined in Python and GX's
+    folder is rebuilt per run.
+- **`run_all.py --validate`** runs `.venv-gx/bin/python -m src.quality --engine <engine>` at the
+  end and exits with its code. With a deliberately too-strict occupancy cap, `run_all` exited 1 and
+  named both failing checks. Without the flag, the console output is identical to before.
+
+**Runtime:** about 26 s for a full Spark-engine validation with Data Docs (4.7M rows read and
+validated), and 18–41 s as the last step of `run_all --validate`. 41 s was the first run in a
+brand-new venv.
+
+**Mutation-test record (validation)**
+- **18 defects, each run alone**, were each caught by **exactly** the intended expectation(s):
+  - raw (4): hour ≠ timestamp hour, a null segment, handle time 3,601 s, a duplicate `contact_id`;
+  - interim (4): one daily total +1, one fraction +1e-6, `n_contacts` −1, a stale Parquet;
+  - processed (5): SL 0.79 in one slot, 0 agents in a slot, fractions summing to 1.001, a 5-pt
+    simulation gap, one missing forecast day. The missing day correctly trips 4 checks: row
+    count, gaps, future-day count, and the plan covering a date the forecast doesn't;
+  - outputs (5): a savings cost +$100, summary peak +1, one interval's scheduled +5, the SL KPI
+    tile drifted, one `daily_volume` forecast +1.
+- **Automated in `tests/test_quality.py`:** one combined run per layer, where the failures must
+  equal exactly the intended set; a warning-only case (exit 0, reported); a missing input (exit 1).
+
+## Phase 3 — Lineage and gates in Airflow
+
+- **Assets from the catalog:** every task's inlets and outlets are Airflow Assets built from
+  `catalog.yaml` (URI `file://<repo>/<path>`, group `staffing_pipeline`, layer and format as
+  extras). No path is typed twice.
+- **Verified in Airflow 3.3.2:**
+  - `/api/v2/assets` lists all **24 assets**, each with exactly the catalog's producing and
+    consuming tasks, and **24/24** got an update event in the run;
+  - the UI's asset page draws the task-level lineage graph. Screenshots from this session:
+    `/var/folders/zx/qw39n89s3lqfpvmtm1bnf2v00000gn/T/claude-chrome-screenshots-yoHxyb/screenshot-1793090718450-1.png`
+    (lineage) and the Assets list.
+- **Two gate tasks** run `src/quality.py` in `.venv-gx` with `retries=0`:
+  - `validate_interim` (raw + interim) runs after `spark_etl` and gates `forecast`;
+  - `validate_outputs` (processed + outputs) runs after `dashboard` and `simulate` and gates
+    `build_deck`.
+
+  The gates write only history and the trend, never the committed `latest*.md`. No Makefile PATH
+  change was needed, because the DAG calls `.venv-gx/bin/python` directly.
+- **Runs:** `make airflow-test` 69.6 / 70.8 / 74.6 s and one scheduler run 72.0 s, all **10/10
+  tasks success** (8 tasks took 37–41 s before the gates). The gates validate 109 + 239
+  expectations.
+- **Gate proof** (code patched temporarily, then restored with `git checkout`):
+  1. **ETL bug** (one daily total +1 in `spark_etl.py`): `validate_interim` failed on exactly
+     `spark_daily_series.y.total_equals_raw`. forecast, optimize, dashboard, validate_outputs and
+     build_deck were `upstream_failed`; erlang_check and simulate still succeeded.
+     `make airflow-test` exited 2.
+  2. **Dashboard bug** (one savings cost +$100 in `dashboard.py`): `validate_outputs` failed on
+     exactly `outputs.savings_cost_matches_hours`, and `build_deck` was `upstream_failed`, so no
+     deck was built from bad numbers.
+
+  A clean run afterwards was green, and every committed output was identical again.
+- **For the screenshots,** the verification run used `AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS=True`
+  (no login; UI bound to 127.0.0.1) so no password was typed into a browser. The Makefile is
+  unchanged.
+
+## Phase 4 — Monitoring, docs, final verification
+
+- **Trend:** every validation run (full, `--validate`, or an Airflow gate) appends one row per
+  suite to `outputs/quality/history/quality_trend.csv` (git-ignored). Each row has the run id,
+  timestamp, engine, scope, expectations passed/failed/warned, and key observed values: contacts,
+  staffing slots, agent-hours, savings vs 8-hour shifts, minimum SL, MAPE.
+  `python -m src.quality_trend [N]` prints the last N runs. It uses only the standard library, so
+  it works from any venv.
+- **README:** a "Data quality and lineage" section (the three layers and their gates, commands, the
+  generated lineage graph). The Spark + Airflow diagram now shows the two gates. The test list,
+  test count (103) and project tree are updated.
+
+**Final verification**
+
+| Check | Result |
+|---|---|
+| Brand-new venvs from `requirements.txt` and `requirements-gx.txt` | installed, `pip check` clean; the GX venv equals its pin file exactly |
+| `run_all.py --validate`, pandas engine, clean copy | exit 0, 278 expectations pass |
+| `run_all.py --validate`, Spark engine, clean copy | exit 0, 348 expectations pass |
+| Outputs vs committed, both engines | **15/15 reproducible outputs byte-identical**; `latest.md` and `latest_interim.md` identical; `dashboard.html` and the deck identical in content |
+| Full suite in the fresh environment | **103 passed**, 0 skipped (103.3 s) |
+| Airflow, final code (`make airflow-test`) | 10/10 success, 74.6 s, both gates pass; trend records `gate:raw,interim` and `gate:processed,outputs` |
+
+**Open questions / things I was unsure about**
+- **The `python -c` exit:** any environment with both GX and pyspark is affected. It's documented
+  here and in `requirements-gx.txt`, and guarded by a test in `.venv-gx`.
+- **GX's working folder** (`outputs/quality/gx/`) and Data Docs keep every run's validation results,
+  so they grow over time. They're git-ignored; `rm -rf outputs/quality/gx outputs/quality/data_docs`
+  resets them.
+- **The trend's engine label:** a CLI `--layers` run is labelled with `--engine`'s default
+  (`pandas`) even though a layer subset doesn't depend on the engine. It's cosmetic; Airflow gates
+  are labelled `spark`.
+- **Freshness uses modification times,** so copying artifacts without preserving them (plain `cp`)
+  can make a fresh file look stale. That errs on the side of failing.
+- **The quality reports aren't in the catalog.** They describe the datasets rather than being
+  pipeline data. They are listed in the README and in `src/quality.py`'s docstring.
+- **An empty `~/airflow` folder** created by my one-off API probe in the Spark + Airflow session
+  (no `AIRFLOW_HOME` set) was found and removed. The new DAG test uses a throwaway `AIRFLOW_HOME`.
+
+## Candidate resume bullets (numbers measured above; data is synthetic)
+
+1. Built a **YAML data catalog** covering all **24 datasets and 10 pipeline tasks**. It is the
+   single source of truth for schemas and lineage, and generates the data dictionary and lineage
+   graphs. **36 tests** fail on schema drift, broken lineage, or a catalog vs Airflow-DAG mismatch.
+2. Added a **Great Expectations validation framework**: **348 expectations** across raw, interim,
+   processed and output layers, generated from the catalog, gating an **Airflow 3** pipeline at two
+   points. **18 of 18 injected data defects** were each caught by exactly the intended expectation,
+   and injected ETL and dashboard bugs stopped the run before the executive deck was built.
+3. Declared **dataset lineage natively in Airflow** (24 Assets derived from the catalog, with
+   producing and consuming tasks and per-run update events) while keeping all **15 pipeline outputs
+   byte-reproducible** on both the pandas and Spark engines over **4.7M synthetic records**,
+   verified from fresh environments.

@@ -7,7 +7,7 @@
 - Lineage: every dataset has a producer and is consumed or marked terminal; the graph is acyclic.
 - The catalog's tasks are exactly the DAG's tasks, and the DAG orders every producer before its
   consumers. The DAG is loaded by Airflow itself through .venv-airflow (skipped if not installed).
-- DATA_DICTIONARY.md is exactly what the catalog renders.
+- DATA_DICTIONARY.md and the README's lineage block are exactly what the catalog renders.
 """
 import copy
 import importlib.util
@@ -252,3 +252,10 @@ def test_dag_orders_every_producer_before_its_consumers(dag_upstream):
 def test_data_dictionary_is_up_to_date():
     assert cat.DICTIONARY_PATH.read_text() == cat.render_dictionary(cat.load_valid()), \
         "DATA_DICTIONARY.md is stale — run `python -m src.catalog`"
+
+
+def test_readme_lineage_block_is_up_to_date():
+    readme = cat.README_PATH.read_text()
+    assert all(m in readme for m in cat.README_MARKERS), "README lost its lineage markers"
+    assert cat.readme_with_lineage(readme, cat.load_valid()) == readme, \
+        "README lineage graph is stale — run `python -m src.catalog`"

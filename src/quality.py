@@ -21,6 +21,8 @@ Every row count, column, allowed value and range comes from metadata/catalog.yam
 Writes:  outputs/quality/latest.md          deterministic summary of raw/processed/outputs (committed)
          outputs/quality/latest_interim.md  deterministic summary of the interim suite (committed)
          outputs/quality/history/*.json     one record per run, with timestamps (git-ignored)
+         outputs/quality/history/quality_trend.csv  one row per run and suite (git-ignored;
+                                            print it with `python -m src.quality_trend`)
          outputs/quality/data_docs/         Great Expectations Data Docs (git-ignored)
 
 Runs in its own virtualenv (make gx-install); it only reads files.
@@ -57,6 +59,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 import config  # noqa: E402
 from src import catalog as cat  # noqa: E402
+from src import quality_trend  # noqa: E402
 
 SUITES = ("raw", "interim", "processed", "outputs")
 ENGINE_SUITES = {"pandas": ("raw", "processed", "outputs"), "spark": SUITES}
@@ -690,7 +693,35 @@ def print_summary(outcomes, suites) -> None:
     print("=" * 72)
 
 
-def write_history(outcomes, suites, engine, root: Path, started: float, finished: float) -> Path:
+def key_metrics(root: Path) -> dict:
+    """Headline values of the run being validated, for the trend (whatever files exist)."""
+    inp, out = Inputs(root, cat.load_valid()), {}
+    for key, read in (("contacts_rows", lambda: inp.raw_rows()),
+                      ("staffing_slots", lambda: len(inp.frame("staffing_plan"))),
+                      ("min_service_level", lambda: float(inp.frame("staffing_plan")["predicted_sl"].min())),
+                      ("opt_agent_hours", lambda: float(inp.frame("optimize_summary").iloc[0]["cost.opt_hours"])),
+                      ("realistic_saved_dollars",
+                       lambda: float(inp.frame("optimize_summary").iloc[0]["cost.realistic_saved_dollars"])),
+                      ("mape_normal", lambda: float(inp.frame("forecast_metrics").iloc[0]["mape_normal"]))):
+        try:
+            out[key] = read()
+        except (MissingInput, KeyError):
+            pass
+    return out
+
+
+def record_trend(outcomes, suites, engine: str, scope: str, root: Path, run_id: str, finished_at: str) -> Path:
+    metrics = key_metrics(root)
+    rows = []
+    for s in suites:
+        t, p, f, w = _counts([o for o in outcomes if o.suite == s])
+        rows.append({"run_id": run_id, "finished_at": finished_at, "engine": engine, "scope": scope,
+                     "suite": s, "expectations": t, "passed": p, "gate_failures": f, "warnings": w, **metrics})
+    return quality_trend.append(rows, root)
+
+
+def write_history(outcomes, suites, engine, root: Path, started: float, finished: float,
+                  scope: str = "full") -> Path:
     stamp = dt.datetime.now(dt.timezone.utc)
     run_id = f"{stamp:%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
     hdir = Path(root) / QUALITY_DIR / "history"
@@ -701,6 +732,7 @@ def write_history(outcomes, suites, engine, root: Path, started: float, finished
         "duration_seconds": round(finished - started, 2), "engine": engine, "suites": list(suites),
         "great_expectations": gx.__version__, "success": not gating_failures(outcomes),
         "outcomes": [asdict(o) for o in outcomes]}, indent=2))
+    record_trend(outcomes, suites, engine, scope, root, run_id, stamp.isoformat(timespec="seconds"))
     return path
 
 
@@ -708,7 +740,8 @@ def gate(suites, root: Path = PROJECT_ROOT, engine: str = "spark") -> None:
     """Pipeline gate (Airflow): validate, record history, raise if a gating expectation failed."""
     started = time.perf_counter()
     outcomes = run(suites, root=root, docs=True)
-    write_history(outcomes, suites, engine, root, started, time.perf_counter())
+    write_history(outcomes, suites, engine, root, started, time.perf_counter(),
+                  scope="gate:" + ",".join(suites))
     print_summary(outcomes, suites)
     failed = gating_failures(outcomes)
     if failed:
@@ -734,7 +767,8 @@ def main(argv: list[str] | None = None) -> int:
     started = time.perf_counter()
     outcomes = run(suites, root=args.root, docs=not args.no_docs)
     finished = time.perf_counter()
-    history = write_history(outcomes, suites, args.engine, args.root, started, finished)
+    history = write_history(outcomes, suites, args.engine, args.root, started, finished,
+                            scope=",".join(suites) if args.layers else "full")
     if not args.layers:                                     # a full run refreshes the committed summaries
         for name, members in REPORTS.items():
             members = tuple(s for s in members if s in suites)

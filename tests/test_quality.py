@@ -112,6 +112,19 @@ def test_committed_reports_are_up_to_date(clean_run):
             f"outputs/quality/{name} is stale — run `make validate` after the pipeline"
 
 
+def test_a_run_appends_one_trend_row_per_suite(clean_run):
+    import csv
+    root, _, outcomes, _ = clean_run
+    with open(root / "outputs" / "quality" / "history" / "quality_trend.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert [r["suite"] for r in rows] == ["raw", "interim", "processed", "outputs"]
+    assert sum(int(r["expectations"]) for r in rows) == len(outcomes)
+    assert {r["run_id"] for r in rows} == {rows[0]["run_id"]} and rows[0]["scope"] == "full"
+    with open(RAW_CSV_PATH, "rb") as f:
+        raw_rows = sum(chunk.count(b"\n") for chunk in iter(lambda: f.read(1 << 24), b"")) - 1
+    assert int(rows[0]["contacts_rows"]) == raw_rows and int(rows[0]["staffing_slots"]) == 1440
+
+
 def test_every_data_quality_invariant_is_mirrored(clean_run):
     mirrored = {o["mirrors"] for o in clean_run[2] if o["mirrors"]}
     assert mirrored == {f"DQ-{i}" for i in range(1, 12)}
