@@ -265,3 +265,98 @@ were restored with `git checkout`.
 - SimpleAuthManager (Airflow 3's default) stores the generated admin password in plain text in
   `airflow_home/` (git-ignored). Fine for a laptop bound to localhost, not for a server.
 
+## Phase 4 — Tests and docs
+
+**New tests.** 53 in total (was 26), passing in 34.9 s:
+
+- **`tests/test_spark_etl.py`** (18) runs the ETL on the full `contacts.csv` into a temp directory
+  and checks the cleaned Parquet:
+  - the schema and column types;
+  - every CSV row kept (Parquet rows = CSV data lines = the ETL's own count);
+  - the same data-quality invariants as `tests/test_data_quality.py`, rule for rule (no nulls,
+    handle-time range, category sets, reason mix, flag logic, ≥ 10 IROP events, timestamp inside
+    its bucket, unique ids, derived columns);
+  - the read rules: a renamed header, a malformed boolean, integer or timestamp each fail the ETL
+    rather than becoming nulls.
+
+  The invariants are evaluated in Spark, because reading 4.7M Parquet rows into pandas would need
+  pyarrow, which the project doesn't install.
+- **`tests/conftest.py`** holds a single shared Spark session. It is created only when a Spark
+  test asks for it, and skipped with the reason if no Java runtime starts.
+- **The new tests can fail:** 11 deliberate defects were injected (a null, an out-of-range handle
+  time, an unknown segment, an abandoned-and-resolved row, a shifted `interval_start`, a duplicate
+  id, an off-by-one hour, IROP flags removed, an extra column, and a permissive reader against
+  both read-rule tests). Each was caught by the intended test.
+
+**README.** New "Spark + Airflow" section with a Mermaid architecture diagram and commands. The
+test list, test count, project tree and the per-phase commands are updated. The reproducibility
+sentence is corrected: byte-for-byte holds for every CSV, JSON and PNG, while the HTML dashboard
+and the deck repeat in content only (see Baseline).
+
+## Final verification (after all four phases)
+
+| Check | Result |
+|---|---|
+| Full test suite, project `.venv` | 53 passed (34.9 s) |
+| Fresh venv built only from `requirements.txt`, `run_all.py` both engines, clean copy of the working tree | all 15 reproducible outputs byte-identical to the committed files on both engines |
+| Same fresh venv, full test suite | 53 passed (33.6 s) |
+| `python -m src.spark_etl --parity-full` with the final code | 16/16 checks, max difference 0; pandas 9.0 s, Spark 6.9 s / 9.3 s with JVM start |
+| `make airflow-test` with the final code | 8/8 tasks success, 38.5 s; repo outputs identical to committed |
+| `airflow standalone` + trigger (two runs) | 8/8 tasks success both times, 38.2 s and 37.0 s |
+| `python run_all.py` (pandas) after every phase | outputs and console output unchanged |
+
+**Finding about the existing setup (not changed — your call).** `requirements.txt` pins only
+direct dependencies. A fresh install resolves newer indirect ones than the project `.venv` has
+(e.g. Pillow 13.0.0 vs 12.2.0, fonttools 4.67.0 vs 4.63.0). Every CSV, JSON and PNG still
+reproduced byte for byte under them. The one effect is on `dashboard.html`: the project `.venv`
+also has `orjson` installed (it isn't in `requirements.txt`), and Plotly uses it when present.
+Without it, Plotly's JSON writes characters like "—" as `—`. The fresh-venv dashboard is
+identical to the committed one once those escapes are decoded, so it renders the same, but the
+bytes differ. Options, if you care: pin `orjson` in `requirements.txt`, or commit a full lock
+(`pip freeze`). Either one changes what a fresh install produces, so I left it.
+
+## Summary of what changed
+
+- **`src/spark_etl.py`** (new): Spark ETL, pandas parity check (`--parity-full`), and the
+  `--engine spark` input shaping.
+- **`run_all.py`**: `--engine pandas|spark` (default unchanged).
+- **`src/forecast.py`, `src/optimize.py`, `src/dashboard.py`**: one small input function each;
+  the pandas branch is the original code.
+- **`dags/staffing_pipeline.py`, `Makefile`, `requirements-airflow.txt`** (new): Airflow DAG
+  and how to run it.
+- **Tests:** `tests/test_spark_parity.py`, `tests/test_spark_etl.py`, `tests/conftest.py` (new).
+- **Config:** `requirements.txt` (+ pyspark, py4j) and `.gitignore` (+ `data/interim/`,
+  `.venv-airflow/`, `airflow_home/`).
+- **Docs:** `README.md` and `NOTES.md`.
+- **Outputs:** no committed output file changed.
+
+## Open questions / things I was unsure about (all phases)
+
+- **Mermaid diagram not machine-rendered.** Two attempts to validate it locally were blocked by
+  this session's permission rules: uploading it to mermaid.ink, and downloading mermaid-cli via
+  npx. It uses only constructs the README's existing diagram already uses (quoted labels,
+  `<br/>`, chained links) plus nested subgraphs. Check it on GitHub after pushing.
+- **`run_all.py` still ends with "verify the three test suites"** (there are now five test files).
+  Left as is so the pandas engine's output stays byte-for-byte unchanged.
+- **PySpark 4.2's "pandas ≥ 3.0 not fully supported" warning is silenced at session start-up**
+  (Phase 1 notes explain why it doesn't apply). Revisit if `toPandas()` is ever used.
+- **macOS fork-safety settings** in the Makefile are standard workarounds that I set up front and
+  did not test without.
+- **Speed.** Spark is not faster than pandas at this data size on one laptop (Phase 1 timings).
+  Don't claim a speed-up.
+
+## Candidate resume bullets (only numbers measured above; data is synthetic)
+
+1. Ported the raw-data ETL of a contact-center staffing pipeline to **PySpark** (explicit schema,
+   fail-fast parsing, a Parquet curated layer that shrinks 570 MB of CSV to 62 MB) over
+   **4.7M synthetic contact records**; all **16 pandas-vs-Spark parity checks matched exactly**,
+   and the Spark path reproduces all 15 committed pipeline outputs byte for byte.
+2. Orchestrated the **8-stage pipeline** (data generation → Spark ETL → Prophet forecast →
+   Erlang C staffing → SimPy validation → dashboards → executive deck) as an **Apache Airflow 3
+   DAG** with isolated environments and a staffing-math verification gate. Scheduled runs finish
+   end to end in **~38 s** on a laptop, and the plan they produce uses **43% fewer agent-hours than
+   fixed 8-hour shifts** (synthetic data).
+3. Doubled the automated test suite **from 26 to 53 tests**: data-quality invariants on the Parquet
+   layer, exact-equality engine parity and fail-fast read rules. Each new check was confirmed by
+   fault injection (**16 of 16 seeded defects caught**), and both engines were verified to
+   reproduce every output from a clean environment.

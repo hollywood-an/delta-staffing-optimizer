@@ -34,18 +34,7 @@ TOLERANCE = spark_etl.TOLERANCE      # 1e-6
 
 
 @pytest.fixture(scope="module")
-def spark():
-    from pyspark.errors import PySparkRuntimeError
-    try:
-        session = spark_etl.get_spark("staffing-etl-tests")
-    except PySparkRuntimeError as exc:          # e.g. JAVA_GATEWAY_EXITED: no usable JDK
-        pytest.skip(f"no working Java runtime for Spark: {exc}")
-    yield session
-    session.stop()
-
-
-@pytest.fixture(scope="module")
-def sample(spark, tmp_path_factory):
+def sample(spark, tmp_path_factory):        # `spark`: the shared session from conftest.py
     """The small seeded dataset and the Spark ETL outputs computed from it."""
     tmp = tmp_path_factory.mktemp("spark_parity")
     csv = tmp / "contacts.csv"
