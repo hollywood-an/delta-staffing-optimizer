@@ -37,11 +37,13 @@ constants:
 tasks:   # in DAG order; `gates` = control dependencies (no data passes)
   generate_data: {entry: src.generate_data.main, description: "Generates one seeded year of synthetic contacts and the volume overview chart."}
   spark_etl: {entry: src.spark_etl.run, description: "Reads contacts.csv once in local Spark, writes cleaned Parquet and the aggregates later stages need."}
+  validate_interim: {entry: "src.quality.gate(['raw', 'interim'])", gates: [forecast], description: "Great Expectations gate (.venv-gx): raw and interim suites; nothing downstream runs if it fails."}
   forecast: {entry: "src.forecast.main(engine='spark')", description: "Fits Prophet on the daily series (IROP days blanked), scores the held-out month, forecasts the horizon."}
   erlang_check: {entry: src.erlang._demo, gates: [optimize], description: "Re-checks the spec's verified Erlang C table; gates optimize."}
   simulate: {entry: src.simulate.main, description: "SimPy M/M/c simulation that independently checks Erlang C at four load levels."}
   optimize: {entry: "src.optimize.main(engine='spark')", description: "Erlang C staffing for every future half-hour, priced against two baselines plus IROP and deflection scenarios."}
   dashboard: {entry: "src.dashboard.main(engine='spark')", description: "BI-ready CSVs for Tableau and the self-contained Plotly dashboard."}
+  validate_outputs: {entry: "src.quality.gate(['processed', 'outputs'])", gates: [build_deck], description: "Great Expectations gate (.venv-gx): processed and outputs suites, including cross-file consistency; the deck is built only if it passes."}
   build_deck: {entry: src.build_deck.main, description: "Executive deck; every number is read from the files above."}
 
 datasets:
@@ -53,7 +55,7 @@ datasets:
     format: csv
     committed: false
     produced_by: generate_data
-    consumed_by: [spark_etl]
+    consumed_by: [spark_etl, validate_interim]
     pandas_engine_consumers: [forecast, optimize, dashboard]
     terminal: false
     grain: one row per inbound phone contact
@@ -82,12 +84,12 @@ datasets:
     format: parquet
     committed: false
     produced_by: spark_etl
-    consumed_by: []
-    terminal: true
+    consumed_by: [validate_interim]
+    terminal: false
     grain: one row per inbound phone contact
     primary_key: [contact_id]
     row_count: {min: CONTACTS_MIN, max: CONTACTS_MAX}
-    description: "Cleaned, typed copy of contacts.csv (a directory of Parquet part files); read back inside spark_etl to build the aggregates."
+    description: "Cleaned, typed copy of contacts.csv (a directory of Parquet part files); read back inside spark_etl to build the aggregates, then validated by validate_interim."
     columns_like: contacts
     extra_columns:
       - {name: interval_index, type: integer, unit: half-hour of day, nullable: false, min: 0, max: 47, description: "Planning interval of the day derived from interval_start (hour * 2 + [minute = 30])."}
@@ -98,7 +100,7 @@ datasets:
     format: csv
     committed: false
     produced_by: spark_etl
-    consumed_by: [forecast, dashboard]
+    consumed_by: [forecast, dashboard, validate_interim]
     terminal: false
     grain: one row per day of history
     primary_key: [ds]
@@ -115,7 +117,7 @@ datasets:
     format: csv
     committed: false
     produced_by: spark_etl
-    consumed_by: [forecast]
+    consumed_by: [forecast, validate_interim]
     terminal: false
     grain: one row per half-hour of the day
     primary_key: [interval_index]
@@ -132,7 +134,7 @@ datasets:
     format: csv
     committed: false
     produced_by: spark_etl
-    consumed_by: [optimize, dashboard]
+    consumed_by: [optimize, dashboard, validate_interim]
     terminal: false
     grain: one row per half-hour of the day
     primary_key: [interval_index]
@@ -148,7 +150,7 @@ datasets:
     format: csv
     committed: false
     produced_by: spark_etl
-    consumed_by: [dashboard]
+    consumed_by: [dashboard, validate_interim]
     terminal: false
     grain: one row per contact reason
     primary_key: [reason]
@@ -166,7 +168,7 @@ datasets:
     format: json
     committed: false
     produced_by: spark_etl
-    consumed_by: [optimize, dashboard]
+    consumed_by: [optimize, dashboard, validate_interim]
     terminal: false
     grain: one JSON object
     description: "Single-number aggregates: total contacts, IROP handle time and the app-deflectable share."
@@ -182,7 +184,7 @@ datasets:
     format: csv
     committed: true
     produced_by: forecast
-    consumed_by: [optimize, dashboard, build_deck]
+    consumed_by: [optimize, dashboard, build_deck, validate_outputs]
     terminal: false
     grain: one row per day of the held-out test window plus the future horizon
     primary_key: [date]
@@ -202,7 +204,7 @@ datasets:
     format: csv
     committed: true
     produced_by: forecast
-    consumed_by: [optimize, dashboard]
+    consumed_by: [optimize, dashboard, validate_outputs]
     terminal: false
     grain: one row per half-hour of the day
     primary_key: [interval_index]
@@ -216,7 +218,7 @@ datasets:
     format: json
     committed: true
     produced_by: forecast
-    consumed_by: [build_deck]
+    consumed_by: [build_deck, validate_outputs]
     terminal: false
     grain: one JSON object
     description: "Forecast accuracy on the held-out month, split into normal, holiday and IROP days."
@@ -237,7 +239,7 @@ datasets:
     format: csv
     committed: true
     produced_by: optimize
-    consumed_by: [dashboard, build_deck]
+    consumed_by: [dashboard, build_deck, validate_outputs]
     terminal: false
     grain: one row per 30-minute interval of the future horizon
     primary_key: [date, interval_index]
@@ -262,7 +264,7 @@ datasets:
     format: json
     committed: true
     produced_by: optimize
-    consumed_by: [build_deck]
+    consumed_by: [build_deck, validate_outputs]
     terminal: false
     grain: one JSON object
     description: "Agent-hours and cost for the optimized plan and both baselines, plus the deflection and IROP scenarios."
@@ -304,7 +306,7 @@ datasets:
     format: csv
     committed: true
     produced_by: simulate
-    consumed_by: [build_deck]
+    consumed_by: [build_deck, validate_outputs]
     terminal: false
     grain: one row per simulated load scenario
     primary_key: [name]
@@ -333,7 +335,7 @@ datasets:
     format: csv
     committed: true
     produced_by: dashboard
-    consumed_by: [build_deck]
+    consumed_by: [build_deck, validate_outputs]
     external_consumers: [Tableau Public dashboard]
     terminal: false
     grain: one row per day of history plus the future horizon
@@ -353,9 +355,9 @@ datasets:
     format: csv
     committed: true
     produced_by: dashboard
-    consumed_by: []
+    consumed_by: [validate_outputs]
     external_consumers: [Tableau Public dashboard]
-    terminal: true
+    terminal: false
     grain: one row per half-hour of the day, averaged over the horizon
     primary_key: [interval]
     row_count: {exact: INTERVALS_PER_DAY}
@@ -374,7 +376,7 @@ datasets:
     format: csv
     committed: true
     produced_by: dashboard
-    consumed_by: [build_deck]
+    consumed_by: [build_deck, validate_outputs]
     external_consumers: [Tableau Public dashboard]
     terminal: false
     grain: one row per contact reason
@@ -389,9 +391,9 @@ datasets:
     format: csv
     committed: true
     produced_by: dashboard
-    consumed_by: []
+    consumed_by: [validate_outputs]
     external_consumers: [Tableau Public dashboard]
-    terminal: true
+    terminal: false
     grain: one row per staffing scenario
     primary_key: [scenario]
     row_count: {exact: N_STAFFING_SCENARIOS}
@@ -408,8 +410,8 @@ datasets:
     format: html
     committed: true
     produced_by: dashboard
-    consumed_by: []
-    terminal: true
+    consumed_by: [validate_outputs]
+    terminal: false
     description: "Self-contained Plotly dashboard: KPI tiles, forecast, staffing heatmap, reason mix (embeds a per-run chart id)."
 
   - id: fig_volume_overview

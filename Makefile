@@ -8,7 +8,9 @@
 #   make airflow-test      one-shot run of every task in this terminal (no scheduler or UI needed)
 #
 # Data-quality gates (Great Expectations) live in their own .venv-gx — they only read files:
-#   make gx-install        one-time: create .venv-gx with the pinned validator stack
+#   make gx-install        one-time: create .venv-gx with the pinned validator stack (the DAG's
+#                          validate_interim / validate_outputs tasks run in it; no PATH change needed —
+#                          the DAG calls .venv-gx/bin/python directly)
 #   make validate          validate the files of the last pipeline run (all layers; Spark engine)
 
 PYTHON311    ?= $(HOME)/.pyenv/versions/3.11.14/bin/python

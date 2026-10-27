@@ -17,11 +17,13 @@ flowchart LR
     classDef task fill:#1b2a4a,stroke:#1b2a4a,color:#ffffff
     t_generate_data["generate_data"]:::task
     t_spark_etl["spark_etl"]:::task
+    t_validate_interim["validate_interim"]:::task
     t_forecast["forecast"]:::task
     t_erlang_check["erlang_check"]:::task
     t_simulate["simulate"]:::task
     t_optimize["optimize"]:::task
     t_dashboard["dashboard"]:::task
+    t_validate_outputs["validate_outputs"]:::task
     t_build_deck["build_deck"]:::task
     d_contacts[("raw/contacts.csv")]:::raw
     d_contacts_parquet[("interim/contacts.parquet")]:::interim
@@ -49,43 +51,61 @@ flowchart LR
     d_deck[("outputs/Delta_Reservations_Capstone.pptx")]:::output
     t_generate_data --> d_contacts
     d_contacts --> t_spark_etl
+    d_contacts --> t_validate_interim
     t_spark_etl --> d_contacts_parquet
+    d_contacts_parquet --> t_validate_interim
     t_spark_etl --> d_spark_daily_series
     d_spark_daily_series --> t_forecast
     d_spark_daily_series --> t_dashboard
+    d_spark_daily_series --> t_validate_interim
     t_spark_etl --> d_spark_intraday_profile
     d_spark_intraday_profile --> t_forecast
+    d_spark_intraday_profile --> t_validate_interim
     t_spark_etl --> d_spark_interval_aht
     d_spark_interval_aht --> t_optimize
     d_spark_interval_aht --> t_dashboard
+    d_spark_interval_aht --> t_validate_interim
     t_spark_etl --> d_spark_reason_mix
     d_spark_reason_mix --> t_dashboard
+    d_spark_reason_mix --> t_validate_interim
     t_spark_etl --> d_spark_scalars
     d_spark_scalars --> t_optimize
     d_spark_scalars --> t_dashboard
+    d_spark_scalars --> t_validate_interim
     t_forecast --> d_forecast
     d_forecast --> t_optimize
     d_forecast --> t_dashboard
     d_forecast --> t_build_deck
+    d_forecast --> t_validate_outputs
     t_forecast --> d_intraday_profile
     d_intraday_profile --> t_optimize
     d_intraday_profile --> t_dashboard
+    d_intraday_profile --> t_validate_outputs
     t_forecast --> d_forecast_metrics
     d_forecast_metrics --> t_build_deck
+    d_forecast_metrics --> t_validate_outputs
     t_optimize --> d_staffing_plan
     d_staffing_plan --> t_dashboard
     d_staffing_plan --> t_build_deck
+    d_staffing_plan --> t_validate_outputs
     t_optimize --> d_optimize_summary
     d_optimize_summary --> t_build_deck
+    d_optimize_summary --> t_validate_outputs
     t_simulate --> d_validation
     d_validation --> t_build_deck
+    d_validation --> t_validate_outputs
     t_dashboard --> d_daily_volume
     d_daily_volume --> t_build_deck
+    d_daily_volume --> t_validate_outputs
     t_dashboard --> d_interval_staffing
+    d_interval_staffing --> t_validate_outputs
     t_dashboard --> d_reason_mix
     d_reason_mix --> t_build_deck
+    d_reason_mix --> t_validate_outputs
     t_dashboard --> d_savings_summary
+    d_savings_summary --> t_validate_outputs
     t_dashboard --> d_dashboard_html
+    d_dashboard_html --> t_validate_outputs
     t_generate_data --> d_fig_volume_overview
     d_fig_volume_overview --> t_build_deck
     t_forecast --> d_fig_forecast
@@ -97,31 +117,33 @@ flowchart LR
     t_optimize --> d_fig_savings
     d_fig_savings --> t_build_deck
     t_build_deck --> d_deck
+    t_validate_interim -. gates .-> t_forecast
     t_erlang_check -. gates .-> t_optimize
+    t_validate_outputs -. gates .-> t_build_deck
 ```
 
 ## Datasets
 
 | Dataset | Layer | Path | Produced by | Consumed by | Rows | Committed |
 |---|---|---|---|---|---|---|
-| [`contacts`](#contacts) | raw | `data/raw/contacts.csv` | `generate_data` | `spark_etl` | 3,500,000 – 5,500,000 | no |
-| [`contacts_parquet`](#contacts_parquet) | interim | `data/interim/contacts.parquet` | `spark_etl` | — (terminal) | 3,500,000 – 5,500,000 | no |
-| [`spark_daily_series`](#spark_daily_series) | interim | `data/interim/spark/daily_series.csv` | `spark_etl` | `forecast`, `dashboard` | 365 | no |
-| [`spark_intraday_profile`](#spark_intraday_profile) | interim | `data/interim/spark/intraday_profile.csv` | `spark_etl` | `forecast` | 48 | no |
-| [`spark_interval_aht`](#spark_interval_aht) | interim | `data/interim/spark/interval_aht.csv` | `spark_etl` | `optimize`, `dashboard` | 48 | no |
-| [`spark_reason_mix`](#spark_reason_mix) | interim | `data/interim/spark/reason_mix.csv` | `spark_etl` | `dashboard` | 7 | no |
-| [`spark_scalars`](#spark_scalars) | interim | `data/interim/spark/scalars.json` | `spark_etl` | `optimize`, `dashboard` |  | no |
-| [`forecast`](#forecast) | processed | `data/processed/forecast.csv` | `forecast` | `optimize`, `dashboard`, `build_deck` | 60 | yes |
-| [`intraday_profile`](#intraday_profile) | processed | `data/processed/intraday_profile.csv` | `forecast` | `optimize`, `dashboard` | 48 | yes |
-| [`forecast_metrics`](#forecast_metrics) | processed | `data/processed/forecast_metrics.json` | `forecast` | `build_deck` |  | yes |
-| [`staffing_plan`](#staffing_plan) | processed | `data/processed/staffing_plan.csv` | `optimize` | `dashboard`, `build_deck` | 1,440 | yes |
-| [`optimize_summary`](#optimize_summary) | processed | `data/processed/optimize_summary.json` | `optimize` | `build_deck` |  | yes |
-| [`validation`](#validation) | processed | `data/processed/validation.csv` | `simulate` | `build_deck` | 4 | yes |
-| [`daily_volume`](#daily_volume) | output | `outputs/dashboard/daily_volume.csv` | `dashboard` | `build_deck` | 395 | yes |
-| [`interval_staffing`](#interval_staffing) | output | `outputs/dashboard/interval_staffing.csv` | `dashboard` | — (terminal) | 48 | yes |
-| [`reason_mix`](#reason_mix) | output | `outputs/dashboard/reason_mix.csv` | `dashboard` | `build_deck` | 7 | yes |
-| [`savings_summary`](#savings_summary) | output | `outputs/dashboard/savings_summary.csv` | `dashboard` | — (terminal) | 4 | yes |
-| [`dashboard_html`](#dashboard_html) | output | `outputs/dashboard/dashboard.html` | `dashboard` | — (terminal) |  | yes |
+| [`contacts`](#contacts) | raw | `data/raw/contacts.csv` | `generate_data` | `spark_etl`, `validate_interim` | 3,500,000 – 5,500,000 | no |
+| [`contacts_parquet`](#contacts_parquet) | interim | `data/interim/contacts.parquet` | `spark_etl` | `validate_interim` | 3,500,000 – 5,500,000 | no |
+| [`spark_daily_series`](#spark_daily_series) | interim | `data/interim/spark/daily_series.csv` | `spark_etl` | `forecast`, `dashboard`, `validate_interim` | 365 | no |
+| [`spark_intraday_profile`](#spark_intraday_profile) | interim | `data/interim/spark/intraday_profile.csv` | `spark_etl` | `forecast`, `validate_interim` | 48 | no |
+| [`spark_interval_aht`](#spark_interval_aht) | interim | `data/interim/spark/interval_aht.csv` | `spark_etl` | `optimize`, `dashboard`, `validate_interim` | 48 | no |
+| [`spark_reason_mix`](#spark_reason_mix) | interim | `data/interim/spark/reason_mix.csv` | `spark_etl` | `dashboard`, `validate_interim` | 7 | no |
+| [`spark_scalars`](#spark_scalars) | interim | `data/interim/spark/scalars.json` | `spark_etl` | `optimize`, `dashboard`, `validate_interim` |  | no |
+| [`forecast`](#forecast) | processed | `data/processed/forecast.csv` | `forecast` | `optimize`, `dashboard`, `build_deck`, `validate_outputs` | 60 | yes |
+| [`intraday_profile`](#intraday_profile) | processed | `data/processed/intraday_profile.csv` | `forecast` | `optimize`, `dashboard`, `validate_outputs` | 48 | yes |
+| [`forecast_metrics`](#forecast_metrics) | processed | `data/processed/forecast_metrics.json` | `forecast` | `build_deck`, `validate_outputs` |  | yes |
+| [`staffing_plan`](#staffing_plan) | processed | `data/processed/staffing_plan.csv` | `optimize` | `dashboard`, `build_deck`, `validate_outputs` | 1,440 | yes |
+| [`optimize_summary`](#optimize_summary) | processed | `data/processed/optimize_summary.json` | `optimize` | `build_deck`, `validate_outputs` |  | yes |
+| [`validation`](#validation) | processed | `data/processed/validation.csv` | `simulate` | `build_deck`, `validate_outputs` | 4 | yes |
+| [`daily_volume`](#daily_volume) | output | `outputs/dashboard/daily_volume.csv` | `dashboard` | `build_deck`, `validate_outputs` | 395 | yes |
+| [`interval_staffing`](#interval_staffing) | output | `outputs/dashboard/interval_staffing.csv` | `dashboard` | `validate_outputs` | 48 | yes |
+| [`reason_mix`](#reason_mix) | output | `outputs/dashboard/reason_mix.csv` | `dashboard` | `build_deck`, `validate_outputs` | 7 | yes |
+| [`savings_summary`](#savings_summary) | output | `outputs/dashboard/savings_summary.csv` | `dashboard` | `validate_outputs` | 4 | yes |
+| [`dashboard_html`](#dashboard_html) | output | `outputs/dashboard/dashboard.html` | `dashboard` | `validate_outputs` |  | yes |
 | [`fig_volume_overview`](#fig_volume_overview) | output | `outputs/figures/volume_overview.png` | `generate_data` | `build_deck` |  | yes |
 | [`fig_forecast`](#fig_forecast) | output | `outputs/figures/forecast.png` | `forecast` | `build_deck` |  | yes |
 | [`fig_validation`](#fig_validation) | output | `outputs/figures/validation.png` | `simulate` | `build_deck` |  | yes |
@@ -137,7 +159,7 @@ Synthetic, seeded contact log for the ATL reservations center (git-ignored; rege
 
 - **Path:** `data/raw/contacts.csv` (csv; git-ignored, regenerated)
 - **Produced by:** `generate_data`
-- **Consumed by:** `spark_etl` · pandas engine: `forecast`, `optimize`, `dashboard`
+- **Consumed by:** `spark_etl`, `validate_interim` · pandas engine: `forecast`, `optimize`, `dashboard`
 - **Grain:** one row per inbound phone contact
 - **Primary key:** `contact_id`
 - **Rows:** 3,500,000 (`CONTACTS_MIN`) to 5,500,000 (`CONTACTS_MAX`)
@@ -162,11 +184,11 @@ Synthetic, seeded contact log for the ATL reservations center (git-ignored; rege
 
 ### contacts_parquet
 
-Cleaned, typed copy of contacts.csv (a directory of Parquet part files); read back inside spark_etl to build the aggregates.
+Cleaned, typed copy of contacts.csv (a directory of Parquet part files); read back inside spark_etl to build the aggregates, then validated by validate_interim.
 
 - **Path:** `data/interim/contacts.parquet` (parquet; git-ignored, regenerated)
 - **Produced by:** `spark_etl`
-- **Consumed by:** none (terminal)
+- **Consumed by:** `validate_interim`
 - **Grain:** one row per inbound phone contact
 - **Primary key:** `contact_id`
 - **Rows:** 3,500,000 (`CONTACTS_MIN`) to 5,500,000 (`CONTACTS_MAX`)
@@ -194,7 +216,7 @@ Daily contact totals and IROP flags (the forecast's training series and the dash
 
 - **Path:** `data/interim/spark/daily_series.csv` (csv; git-ignored, regenerated)
 - **Produced by:** `spark_etl`
-- **Consumed by:** `forecast`, `dashboard`
+- **Consumed by:** `forecast`, `dashboard`, `validate_interim`
 - **Grain:** one row per day of history
 - **Primary key:** `ds`
 - **Rows:** 365 (`SIM_DAYS`)
@@ -211,7 +233,7 @@ Average share of a day's contacts that lands in each half-hour (fractions sum to
 
 - **Path:** `data/interim/spark/intraday_profile.csv` (csv; git-ignored, regenerated)
 - **Produced by:** `spark_etl`
-- **Consumed by:** `forecast`
+- **Consumed by:** `forecast`, `validate_interim`
 - **Grain:** one row per half-hour of the day
 - **Primary key:** `interval_index`
 - **Rows:** 48 (`INTERVALS_PER_DAY`)
@@ -228,7 +250,7 @@ Mean handle time per half-hour on normal (non-IROP) days.
 
 - **Path:** `data/interim/spark/interval_aht.csv` (csv; git-ignored, regenerated)
 - **Produced by:** `spark_etl`
-- **Consumed by:** `optimize`, `dashboard`
+- **Consumed by:** `optimize`, `dashboard`, `validate_interim`
 - **Grain:** one row per half-hour of the day
 - **Primary key:** `interval_index`
 - **Rows:** 48 (`INTERVALS_PER_DAY`)
@@ -244,7 +266,7 @@ Contacts, average handle time and repeat rate per contact reason over the full y
 
 - **Path:** `data/interim/spark/reason_mix.csv` (csv; git-ignored, regenerated)
 - **Produced by:** `spark_etl`
-- **Consumed by:** `dashboard`
+- **Consumed by:** `dashboard`, `validate_interim`
 - **Grain:** one row per contact reason
 - **Primary key:** `reason`
 - **Rows:** 7 (`N_REASONS`)
@@ -262,7 +284,7 @@ Single-number aggregates: total contacts, IROP handle time and the app-deflectab
 
 - **Path:** `data/interim/spark/scalars.json` (json; git-ignored, regenerated)
 - **Produced by:** `spark_etl`
-- **Consumed by:** `optimize`, `dashboard`
+- **Consumed by:** `optimize`, `dashboard`, `validate_interim`
 - **Grain:** one JSON object
 
 | Column | Type | Unit | Allowed / range | Nullable | Description |
@@ -279,7 +301,7 @@ Daily contact forecast with a 95% interval; actuals filled in for the test windo
 
 - **Path:** `data/processed/forecast.csv` (csv; committed)
 - **Produced by:** `forecast`
-- **Consumed by:** `optimize`, `dashboard`, `build_deck`
+- **Consumed by:** `optimize`, `dashboard`, `build_deck`, `validate_outputs`
 - **Grain:** one row per day of the held-out test window plus the future horizon
 - **Primary key:** `date`
 - **Rows:** 60 (`TEST_DAYS + FUTURE_DAYS`)
@@ -299,7 +321,7 @@ Intraday profile used to split each daily forecast into 48 half-hours (fractions
 
 - **Path:** `data/processed/intraday_profile.csv` (csv; committed)
 - **Produced by:** `forecast`
-- **Consumed by:** `optimize`, `dashboard`
+- **Consumed by:** `optimize`, `dashboard`, `validate_outputs`
 - **Grain:** one row per half-hour of the day
 - **Primary key:** `interval_index`
 - **Rows:** 48 (`INTERVALS_PER_DAY`)
@@ -316,7 +338,7 @@ Forecast accuracy on the held-out month, split into normal, holiday and IROP day
 
 - **Path:** `data/processed/forecast_metrics.json` (json; committed)
 - **Produced by:** `forecast`
-- **Consumed by:** `build_deck`
+- **Consumed by:** `build_deck`, `validate_outputs`
 - **Grain:** one JSON object
 
 | Column | Type | Unit | Allowed / range | Nullable | Description |
@@ -337,7 +359,7 @@ Erlang C staffing for every future half-hour: volume, load, agents and predicted
 
 - **Path:** `data/processed/staffing_plan.csv` (csv; committed)
 - **Produced by:** `optimize`
-- **Consumed by:** `dashboard`, `build_deck`
+- **Consumed by:** `dashboard`, `build_deck`, `validate_outputs`
 - **Grain:** one row per 30-minute interval of the future horizon
 - **Primary key:** `date`, `interval_index`
 - **Rows:** 1,440 (`FUTURE_DAYS * INTERVALS_PER_DAY`)
@@ -362,7 +384,7 @@ Agent-hours and cost for the optimized plan and both baselines, plus the deflect
 
 - **Path:** `data/processed/optimize_summary.json` (json; committed)
 - **Produced by:** `optimize`
-- **Consumed by:** `build_deck`
+- **Consumed by:** `build_deck`, `validate_outputs`
 - **Grain:** one JSON object
 
 | Column | Type | Unit | Allowed / range | Nullable | Description |
@@ -404,7 +426,7 @@ Erlang C predictions next to SimPy measurements (mean of the replications) per l
 
 - **Path:** `data/processed/validation.csv` (csv; committed)
 - **Produced by:** `simulate`
-- **Consumed by:** `build_deck`
+- **Consumed by:** `build_deck`, `validate_outputs`
 - **Grain:** one row per simulated load scenario
 - **Primary key:** `name`
 - **Rows:** 4 (`N_SIM_SCENARIOS`)
@@ -434,7 +456,7 @@ Daily actuals with the forecast and its 95% band, for the BI forecast chart.
 
 - **Path:** `outputs/dashboard/daily_volume.csv` (csv; committed)
 - **Produced by:** `dashboard`
-- **Consumed by:** `build_deck` · external: Tableau Public dashboard
+- **Consumed by:** `build_deck`, `validate_outputs` · external: Tableau Public dashboard
 - **Grain:** one row per day of history plus the future horizon
 - **Primary key:** `date`
 - **Rows:** 395 (`SIM_DAYS + FUTURE_DAYS`)
@@ -453,7 +475,7 @@ A typical day of the plan: mean volume, agents, service level and occupancy by h
 
 - **Path:** `outputs/dashboard/interval_staffing.csv` (csv; committed)
 - **Produced by:** `dashboard`
-- **Consumed by:** none (terminal) · external: Tableau Public dashboard
+- **Consumed by:** `validate_outputs` · external: Tableau Public dashboard
 - **Grain:** one row per half-hour of the day, averaged over the horizon
 - **Primary key:** `interval`
 - **Rows:** 48 (`INTERVALS_PER_DAY`)
@@ -473,7 +495,7 @@ Contacts, average handle time and repeat rate per reason, for the BI reason char
 
 - **Path:** `outputs/dashboard/reason_mix.csv` (csv; committed)
 - **Produced by:** `dashboard`
-- **Consumed by:** `build_deck` · external: Tableau Public dashboard
+- **Consumed by:** `build_deck`, `validate_outputs` · external: Tableau Public dashboard
 - **Grain:** one row per contact reason
 - **Primary key:** `reason`
 - **Rows:** 7 (`N_REASONS`)
@@ -491,7 +513,7 @@ Agent-hours, cost and volume-weighted service level of each way to staff the sam
 
 - **Path:** `outputs/dashboard/savings_summary.csv` (csv; committed)
 - **Produced by:** `dashboard`
-- **Consumed by:** none (terminal) · external: Tableau Public dashboard
+- **Consumed by:** `validate_outputs` · external: Tableau Public dashboard
 - **Grain:** one row per staffing scenario
 - **Primary key:** `scenario`
 - **Rows:** 4 (`N_STAFFING_SCENARIOS`)
@@ -509,7 +531,7 @@ Self-contained Plotly dashboard: KPI tiles, forecast, staffing heatmap, reason m
 
 - **Path:** `outputs/dashboard/dashboard.html` (html; committed)
 - **Produced by:** `dashboard`
-- **Consumed by:** none (terminal)
+- **Consumed by:** `validate_outputs`
 
 ### fig_volume_overview
 
