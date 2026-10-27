@@ -20,6 +20,8 @@ simpy==4.1.2
 
 # Phase 6 — self-contained Plotly dashboard (fallback for Tableau Public).
 plotly==6.8.0
+orjson==3.11.9          # Plotly writes the dashboard JSON with orjson when it's installed — pinned
+                        # so a fresh install writes dashboard.html exactly like the committed one
 
 # Phase 7 — executive deck generator.
 python-pptx==1.0.2

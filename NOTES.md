@@ -149,7 +149,7 @@ aggregating from it takes 1.7–1.8 s against ~3 s per pandas stage that re-pars
 
 - `run_all.py` still ends with "Run `pytest` to verify the three test suites" even though there
   are now four test files. I left the pandas engine's output byte-for-byte as it was; the README
-  pass in Phase 4 can fix the wording if you want.
+  pass in Phase 4 can fix the wording if you want. (Fixed afterwards — see Open questions.)
 - Individual stage modules don't take an `--engine` flag on the command line
   (`python -m src.forecast` stays pandas). The Spark engine is reached through
   `run_all.py --engine spark` or by calling `main(engine="spark")`, which is what the Airflow
@@ -305,39 +305,52 @@ and the deck repeat in content only (see Baseline).
 | `airflow standalone` + trigger (two runs) | 8/8 tasks success both times, 38.2 s and 37.0 s |
 | `python run_all.py` (pandas) after every phase | outputs and console output unchanged |
 
-**Finding about the existing setup (not changed — your call).** `requirements.txt` pins only
-direct dependencies. A fresh install resolves newer indirect ones than the project `.venv` has
-(e.g. Pillow 13.0.0 vs 12.2.0, fonttools 4.67.0 vs 4.63.0). Every CSV, JSON and PNG still
-reproduced byte for byte under them. The one effect is on `dashboard.html`: the project `.venv`
-also has `orjson` installed (it isn't in `requirements.txt`), and Plotly uses it when present.
-Without it, Plotly's JSON writes characters like "—" as `—`. The fresh-venv dashboard is
-identical to the committed one once those escapes are decoded, so it renders the same, but the
-bytes differ. Options, if you care: pin `orjson` in `requirements.txt`, or commit a full lock
-(`pip freeze`). Either one changes what a fresh install produces, so I left it.
+**Finding about the existing setup (orjson part fixed afterwards).** `requirements.txt` pins
+only direct dependencies. A fresh install resolves newer indirect ones than the project `.venv`
+has (e.g. Pillow 13.0.0 vs 12.2.0, fonttools 4.67.0 vs 4.63.0). Every CSV, JSON and PNG still
+reproduced byte for byte under them.
+
+The one effect was on `dashboard.html`. The project `.venv` also had `orjson` installed (it
+wasn't in `requirements.txt`), and Plotly uses it when present. Without it, Plotly's JSON writer
+turns non-ASCII characters such as "—" into ASCII escape sequences (backslash-u plus four hex
+digits). The fresh-venv dashboard was identical to the committed one once those escapes were
+decoded, so it rendered the same, but the bytes differed.
+
+**Fixed:** `orjson==3.11.9` (the version that produced the committed dashboard) is now pinned in
+`requirements.txt`. Re-checked with a fresh venv built from the updated file, running
+`run_all.py` on both engines from a clean copy of the working tree:
+- `dashboard.html` matches the committed file byte for byte apart from the per-run chart id;
+- all 15 CSV/JSON/PNG outputs are byte-identical;
+- the deck's content is identical.
+
+Not done (optional): a full lock file (`pip freeze`) to also guard the indirect dependencies
+against future releases.
 
 ## Summary of what changed
 
 - **`src/spark_etl.py`** (new): Spark ETL, pandas parity check (`--parity-full`), and the
   `--engine spark` input shaping.
-- **`run_all.py`**: `--engine pandas|spark` (default unchanged).
+- **`run_all.py`**: `--engine pandas|spark` (default unchanged); its closing line no longer
+  counts test suites.
 - **`src/forecast.py`, `src/optimize.py`, `src/dashboard.py`**: one small input function each;
   the pandas branch is the original code.
 - **`dags/staffing_pipeline.py`, `Makefile`, `requirements-airflow.txt`** (new): Airflow DAG
   and how to run it.
 - **Tests:** `tests/test_spark_parity.py`, `tests/test_spark_etl.py`, `tests/conftest.py` (new).
-- **Config:** `requirements.txt` (+ pyspark, py4j) and `.gitignore` (+ `data/interim/`,
-  `.venv-airflow/`, `airflow_home/`).
+- **Config:** `requirements.txt` (+ pyspark, py4j, and orjson so `dashboard.html` reproduces from
+  a fresh install) and `.gitignore` (+ `data/interim/`, `.venv-airflow/`, `airflow_home/`).
 - **Docs:** `README.md` and `NOTES.md`.
 - **Outputs:** no committed output file changed.
 
 ## Open questions / things I was unsure about (all phases)
 
-- **Mermaid diagram not machine-rendered.** Two attempts to validate it locally were blocked by
-  this session's permission rules: uploading it to mermaid.ink, and downloading mermaid-cli via
-  npx. It uses only constructs the README's existing diagram already uses (quoted labels,
-  `<br/>`, chained links) plus nested subgraphs. Check it on GitHub after pushing.
-- **`run_all.py` still ends with "verify the three test suites"** (there are now five test files).
-  Left as is so the pandas engine's output stays byte-for-byte unchanged.
+- **Mermaid diagram — resolved.** Two attempts to validate it before pushing were blocked by this
+  session's permission rules: uploading it to mermaid.ink, and downloading mermaid-cli via npx.
+  After the push I checked github.com directly: it renders correctly, with all 8 tasks, the
+  two-step Spark subgraph and the right arrows.
+- **`run_all.py`'s closing line — fixed.** It said "verify the three test suites" though there
+  are five test files. It now says "verify the test suites" (docstring too). It's console text
+  only, so no output file changed.
 - **PySpark 4.2's "pandas ≥ 3.0 not fully supported" warning is silenced at session start-up**
   (Phase 1 notes explain why it doesn't apply). Revisit if `toPandas()` is ever used.
 - **macOS fork-safety settings** in the Makefile are standard workarounds that I set up front and
