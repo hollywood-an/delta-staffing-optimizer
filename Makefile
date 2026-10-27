@@ -6,8 +6,13 @@
 #   make airflow-up        start Airflow (UI: http://localhost:8080); leave it running, Ctrl-C stops
 #   make airflow-trigger   from a second terminal: unpause + trigger a run of staffing_pipeline
 #   make airflow-test      one-shot run of every task in this terminal (no scheduler or UI needed)
+#
+# Data-quality gates (Great Expectations) live in their own .venv-gx — they only read files:
+#   make gx-install        one-time: create .venv-gx with the pinned validator stack
+#   make validate          validate the files of the last pipeline run (all layers; Spark engine)
 
 PYTHON311    ?= $(HOME)/.pyenv/versions/3.11.14/bin/python
+GX_VENV      ?= .venv-gx
 AIRFLOW_VENV ?= .venv-airflow
 AIRFLOW      := $(AIRFLOW_VENV)/bin/airflow
 DAG_ID       := staffing_pipeline
@@ -22,7 +27,14 @@ export AIRFLOW__API__HOST           := 127.0.0.1
 export OBJC_DISABLE_INITIALIZE_FORK_SAFETY := YES
 export no_proxy := *
 
-.PHONY: airflow-install airflow-up airflow-trigger airflow-test
+.PHONY: airflow-install airflow-up airflow-trigger airflow-test gx-install validate
+
+gx-install:
+	$(PYTHON311) -m venv $(GX_VENV)
+	$(GX_VENV)/bin/pip install -r requirements-gx.txt
+
+validate:
+	$(GX_VENV)/bin/python -m src.quality --engine spark
 
 airflow-install:
 	$(PYTHON311) -m venv $(AIRFLOW_VENV)

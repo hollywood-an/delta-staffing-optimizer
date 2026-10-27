@@ -1,0 +1,52 @@
+# Data-quality gates (src/quality.py, Great Expectations) — installed into their OWN virtualenv
+# (.venv-gx), never the pipeline's .venv:
+#   make gx-install   (or: python3.11 -m venv .venv-gx && .venv-gx/bin/pip install -r requirements-gx.txt)
+#
+# Why separate: importing Great Expectations in an environment that has pyspark pulls in Spark
+# Connect, and PySpark 4.2.0's doctest heuristic there calls sys.exit(0) whenever the main module
+# has no file (e.g. `python -c`): a validation process could end "successfully" without validating.
+# The validator only reads files, so it needs neither pyspark nor the pipeline's other packages.
+#
+# Every package is pinned: this is the exact environment that was tested (pip freeze).
+
+# Direct dependencies
+great_expectations==1.24.1
+pandas==3.0.3            # same pin as the pipeline, so files parse identically
+numpy==2.4.6             # same pin as the pipeline
+pyarrow==26.0.0          # reads the Spark Parquet layer
+PyYAML==6.0.3            # metadata/catalog.yaml (same pin as the pipeline)
+
+# Transitive dependencies
+altair==6.3.0
+annotated-types==0.8.0
+attrs==26.1.0
+certifi==2026.10.23
+cffi==2.1.1
+charset-normalizer==3.5.2
+cryptography==50.0.2
+idna==3.20
+Jinja2==3.1.6
+jsonschema==4.26.0
+jsonschema-specifications==2025.9.1
+MarkupSafe==3.0.4
+marshmallow==4.3.1
+mistune==3.4.0
+narwhals==2.27.1
+packaging==26.3
+pycparser==3.12
+pydantic==2.14.1
+pydantic_core==2.50.1
+pyparsing==3.3.3
+python-dateutil==3.0.0
+referencing==0.37.0
+requests==2.34.2
+rpds-py==2026.9.1
+ruamel.yaml==0.19.1
+scipy==1.17.1
+six==1.17.0
+tqdm==4.70.1
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+tzdata==2026.5
+tzlocal==5.4.5
+urllib3==2.8.0

@@ -18,14 +18,23 @@ aggregates) and the forecast, optimize and dashboard phases read its aggregates 
 re-reading contacts.csv with pandas. Same outputs, byte for byte (see NOTES.md). Needs pyspark and
 a Java runtime; the default pandas engine needs neither.
 
+`--validate` runs the data-quality gates at the end (src/quality.py, Great Expectations, in its own
+.venv-gx: make gx-install) and exits non-zero if a gating expectation fails. Without the flag
+nothing changes.
+
 Run:  python run_all.py                  # pandas engine (default)
       python run_all.py --engine spark   # Spark ETL for the raw-data stages
+      python run_all.py --validate       # either engine, then the data-quality gates
 """
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
+import sys
 import time
 from functools import partial
+from pathlib import Path
 
 from src import build_deck, dashboard, erlang, forecast, generate_data, optimize, simulate
 
@@ -56,12 +65,27 @@ def spark_steps() -> list:
     ]
 
 
+def validate(engine: str) -> None:
+    """Run the data-quality gates in .venv-gx (Great Expectations only reads the files)."""
+    root = Path(__file__).resolve().parent
+    gx_python = Path(os.environ.get("STAFFING_GX_PYTHON", root / ".venv-gx" / "bin" / "python"))
+    if not gx_python.exists():
+        sys.exit(f"--validate needs the data-quality venv: run `make gx-install` ({gx_python} not found)")
+    code = subprocess.run([str(gx_python), "-m", "src.quality", "--engine", engine], cwd=root).returncode
+    if code:
+        sys.exit(code)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Run the staffing pipeline end to end.")
     parser.add_argument("--engine", choices=["pandas", "spark"], default="pandas",
                         help="engine for the raw-data stages (default: pandas)")
+    parser.add_argument("--validate", action="store_true",
+                        help="run the data-quality gates at the end; exit non-zero on a failure")
     args = parser.parse_args(argv)
     steps = STEPS if args.engine == "pandas" else spark_steps()
+    if args.validate:
+        steps = steps + [("Data quality — Great Expectations gates", partial(validate, args.engine))]
 
     start = time.perf_counter()
     for name, step in steps:

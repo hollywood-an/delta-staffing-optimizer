@@ -18,6 +18,14 @@ data/interim/
 .venv-airflow/
 airflow_home/
 
+# Data-quality gates: their own virtualenv, plus everything with a timestamp or run id —
+# per-run results and trend, Great Expectations' working project, generated Data Docs.
+# (outputs/quality/latest*.md are deterministic and committed.)
+.venv-gx/
+outputs/quality/history/
+outputs/quality/gx/
+outputs/quality/data_docs/
+
 # Jupyter
 .ipynb_checkpoints/
 
