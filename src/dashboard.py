@@ -88,6 +88,23 @@ def _aht_and_deflectable(contacts):
     return aht.to_numpy(), share
 
 
+def _history_aggregates(engine: str):
+    """(daily_actual, reason_mix, aht_by_bucket, deflectable_share): from contacts.csv with pandas,
+    or from the aggregates src/spark_etl.py already computed (engine="spark"; bit-identical)."""
+    if engine == "spark":
+        from src.spark_etl import dashboard_inputs   # here, so the pandas path never needs pyspark
+        print("Loading Spark ETL aggregates for dashboard exports...")
+        return dashboard_inputs()
+    if engine != "pandas":
+        raise ValueError(f"engine must be 'pandas' or 'spark', got {engine!r}")
+    print("Aggregating history for dashboard exports...")
+    contacts = _read_contacts()
+    daily_actual = _daily_actuals(contacts)
+    reason_mix = _reason_mix(contacts)
+    aht_by_bucket, deflectable_share = _aht_and_deflectable(contacts)
+    return daily_actual, reason_mix, aht_by_bucket, deflectable_share
+
+
 # --------------------------------------------------------------------------------------
 # Service-level helpers for the baseline scenarios
 # --------------------------------------------------------------------------------------
@@ -107,14 +124,9 @@ def _baseline_vw_sl(plan, working):
 # --------------------------------------------------------------------------------------
 # Build the four CSVs
 # --------------------------------------------------------------------------------------
-def build_exports():
+def build_exports(engine: str = "pandas"):
     DASH_DIR.mkdir(parents=True, exist_ok=True)
-    print("Aggregating history for dashboard exports...")
-    contacts = _read_contacts()
-    daily_actual = _daily_actuals(contacts)
-    reason_mix = _reason_mix(contacts)
-    aht_by_bucket, deflectable_share = _aht_and_deflectable(contacts)
-    del contacts
+    daily_actual, reason_mix, aht_by_bucket, deflectable_share = _history_aggregates(engine)
 
     # --- daily_volume.csv: full actual history + forecast (+ 95% band) ---
     fc = pd.read_csv(FORECAST_CSV)
@@ -284,8 +296,8 @@ def build_html(daily_volume, plan, reason_mix, kpis, path=HTML_PATH):
     return path
 
 
-def run_dashboard():
-    daily_volume, plan, reason_mix, savings, kpis = build_exports()
+def run_dashboard(engine: str = "pandas"):
+    daily_volume, plan, reason_mix, savings, kpis = build_exports(engine)
     html = build_html(daily_volume, plan, reason_mix, kpis)
     print("=" * 64)
     print("DASHBOARD EXPORTS")
@@ -307,8 +319,8 @@ def run_dashboard():
     return savings
 
 
-def main() -> None:
-    run_dashboard()
+def main(engine: str = "pandas") -> None:
+    run_dashboard(engine=engine)
 
 
 if __name__ == "__main__":

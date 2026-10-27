@@ -7,11 +7,16 @@ size (90 days at ~1,500 contacts/day, ~140k rows) rather than a row sample of th
 contacts.csv, so the test is fast, deterministic and doesn't need the full file. The full
 4.7M-row check is run by hand: `python -m src.spark_etl --parity-full`.
 
+The last three tests cover the `--engine spark` seam: the inputs handed to forecast, optimize and
+dashboard must be exactly equal (values, dtypes, index names) to what their pandas readers return.
+
 Skipped, with the reason, when pyspark isn't installed or no Java runtime can start.
 """
 import sys
 from pathlib import Path
 
+import numpy as np
+import pandas as pd
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -40,14 +45,20 @@ def spark():
 
 
 @pytest.fixture(scope="module")
-def parity(spark, tmp_path_factory):
-    """(pandas reference, Spark outputs read back from disk, {check: max |diff|})."""
+def sample(spark, tmp_path_factory):
+    """The small seeded dataset and the Spark ETL outputs computed from it."""
     tmp = tmp_path_factory.mktemp("spark_parity")
     csv = tmp / "contacts.csv"
     write_contacts(generate_contacts(sim_days=SAMPLE_DAYS, base_daily=SAMPLE_BASE_DAILY), csv)
     spark_etl.run_etl(csv, tmp / "contacts.parquet", tmp / "spark", spark=spark)
-    ref = spark_etl.pandas_reference(csv)
-    out = spark_etl.load_outputs(tmp / "spark")
+    return {"csv": csv, "out_dir": tmp / "spark"}
+
+
+@pytest.fixture(scope="module")
+def parity(sample):
+    """(pandas reference, Spark outputs read back from disk, {check: max |diff|})."""
+    ref = spark_etl.pandas_reference(sample["csv"])
+    out = spark_etl.load_outputs(sample["out_dir"])
     return ref, out, dict(spark_etl.compare(ref, out))
 
 
@@ -93,3 +104,33 @@ def test_all_checks_pass(parity):
     # Catches a check added to spark_etl.compare() later that no test above names.
     _, _, checks = parity
     assert all(diff <= TOLERANCE for diff in checks.values()), checks
+
+
+# --- `--engine spark` seam: what each stage receives must be IDENTICAL to the pandas readers'
+# return values (values, dtypes, index names) — stricter than 1e-6, because the downstream
+# outputs are required to be byte-identical.
+def test_forecast_inputs_identical_to_pandas(parity, sample):
+    ref = parity[0]
+    daily, irop_by_date, profile = spark_etl.forecast_inputs(sample["out_dir"])
+    pd.testing.assert_frame_equal(daily, ref["daily"], check_exact=True)
+    pd.testing.assert_series_equal(irop_by_date, ref["irop"], check_exact=True)
+    pd.testing.assert_frame_equal(profile, ref["profile"], check_exact=True)
+
+
+def test_optimize_inputs_identical_to_pandas(parity, sample):
+    ref = parity[0]
+    aht, aht_irop, share = spark_etl.optimize_inputs(sample["out_dir"])
+    np.testing.assert_array_equal(aht, ref["aht"], strict=True)
+    assert aht_irop == ref["aht_irop"]
+    assert share == ref["deflectable_share"]
+
+
+def test_dashboard_inputs_identical_to_pandas(parity, sample):
+    ref = parity[0]
+    daily_actual, reason_mix, aht, share = spark_etl.dashboard_inputs(sample["out_dir"])
+    pd.testing.assert_series_equal(daily_actual, ref["daily_actual"], check_exact=True)
+    # row labels differ (pandas keeps the pre-sort index) but nothing downstream reads them
+    pd.testing.assert_frame_equal(reason_mix.reset_index(drop=True),
+                                  ref["reason_mix"].reset_index(drop=True), check_exact=True)
+    np.testing.assert_array_equal(aht, ref["dash_aht"], strict=True)
+    assert share == ref["dash_share"]

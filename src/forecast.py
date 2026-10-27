@@ -222,11 +222,24 @@ def _plot(daily, oos, train_last, last_data, backend, mape_normal, fig_path=FIG_
     plt.close(fig)
 
 
-def run_forecast(backend: str = "auto") -> dict:
+def _history(engine: str):
+    """(daily[ds, y], irop_by_date, intraday profile): from contacts.csv with pandas, or from the
+    aggregates src/spark_etl.py already computed (engine="spark"; bit-identical, see NOTES.md)."""
+    if engine == "spark":
+        from src.spark_etl import forecast_inputs   # here, so the pandas path never needs pyspark
+        print("Loading Spark ETL aggregates...")
+        return forecast_inputs()
+    if engine != "pandas":
+        raise ValueError(f"engine must be 'pandas' or 'spark', got {engine!r}")
     print("Loading contact history...")
     contacts = _read_contacts()
     daily, irop_by_date = daily_series(contacts)
     profile = intraday_profile(contacts)
+    return daily, irop_by_date, profile
+
+
+def run_forecast(backend: str = "auto", engine: str = "pandas") -> dict:
+    daily, irop_by_date, profile = _history(engine)
 
     train = daily.iloc[:-TEST_DAYS].reset_index(drop=True)
     test = daily.iloc[-TEST_DAYS:].reset_index(drop=True)
@@ -317,8 +330,8 @@ def _print_summary(daily, train, test, oos, profile, m, train_last, last_data):
     print("=" * 64)
 
 
-def main() -> None:
-    run_forecast()
+def main(engine: str = "pandas") -> None:
+    run_forecast(engine=engine)
 
 
 if __name__ == "__main__":

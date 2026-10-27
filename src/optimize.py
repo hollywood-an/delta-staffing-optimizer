@@ -67,6 +67,17 @@ def _historical_aht_and_mix():
     return aht_by_bucket, aht_irop, deflectable_share
 
 
+def _handle_time_inputs(engine: str):
+    """(aht_by_bucket, aht_irop, deflectable_share): from contacts.csv with pandas, or from the
+    aggregates src/spark_etl.py already computed (engine="spark"; bit-identical, see NOTES.md)."""
+    if engine == "spark":
+        from src.spark_etl import optimize_inputs   # here, so the pandas path never needs pyspark
+        return optimize_inputs()
+    if engine != "pandas":
+        raise ValueError(f"engine must be 'pandas' or 'spark', got {engine!r}")
+    return _historical_aht_and_mix()
+
+
 # --------------------------------------------------------------------------------------
 # Erlang C staffing for one interval / one day
 # --------------------------------------------------------------------------------------
@@ -225,7 +236,7 @@ def plot_savings(cost, deflect_cost, path):
 # --------------------------------------------------------------------------------------
 # Pipeline
 # --------------------------------------------------------------------------------------
-def run_optimize() -> dict:
+def run_optimize(engine: str = "pandas") -> dict:
     print("Loading forecast, intraday profile, and historical handle times...")
     forecast = pd.read_csv(FORECAST_CSV)
     fut = forecast[forecast["segment"] == "future"][["date", "forecast"]].copy()
@@ -235,7 +246,7 @@ def run_optimize() -> dict:
     profile = pd.read_csv(INTRADAY_CSV).sort_values("interval_index")
     fractions = profile["fraction"].to_numpy()
     labels = profile["interval_start"].tolist()
-    aht_by_bucket, aht_irop, deflectable_share = _historical_aht_and_mix()
+    aht_by_bucket, aht_irop, deflectable_share = _handle_time_inputs(engine)
 
     # --- optimized plan ---
     plan = build_staffing_plan(fut, fractions, labels, aht_by_bucket)
@@ -342,8 +353,8 @@ def _print_summary(r: dict, plan: pd.DataFrame) -> None:
     print("=" * 72)
 
 
-def main() -> None:
-    run_optimize()
+def main(engine: str = "pandas") -> None:
+    run_optimize(engine=engine)
 
 
 if __name__ == "__main__":

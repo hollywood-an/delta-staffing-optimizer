@@ -20,6 +20,10 @@ bit-identical to pandas, not merely close. The small results are collected to th
 written with pandas, so number formatting matches the pandas-written files (Spark's CSV writer
 would emit 3.2E-4-style numbers into a directory of part files).
 
+`python run_all.py --engine spark` runs this after Phase 1; forecast, optimize and dashboard then
+take their inputs from forecast_inputs / optimize_inputs / dashboard_inputs below instead of
+re-reading contacts.csv, and every pipeline output comes out byte-identical (NOTES.md).
+
 Run:  python -m src.spark_etl                # CSV -> Parquet -> aggregates
       python -m src.spark_etl --parity-full  # full-data pandas-vs-Spark parity + wall-clock times
 """
@@ -236,6 +240,37 @@ def load_outputs(out_dir: Path = SPARK_OUT_DIR) -> dict:
         "reason_mix": pd.read_csv(out_dir / REASON_MIX_NAME, **rt),
         "scalars": json.loads((out_dir / SCALARS_NAME).read_text()),
     }
+
+
+# Spark outputs shaped exactly like the pandas readers' return values (same columns, dtypes and
+# index names), so `--engine spark` swaps only the source of each stage's inputs.
+def forecast_inputs(out_dir: Path = SPARK_OUT_DIR):
+    """(daily[ds, y], irop_by_date, intraday profile) — as forecast.daily_series and
+    forecast.intraday_profile return them."""
+    out = load_outputs(out_dir)
+    d = out["daily"]
+    ds = pd.to_datetime(d["ds"])
+    daily = pd.DataFrame({"ds": ds, "y": d["y"]})
+    irop_by_date = pd.Series(d["irop_flag"].to_numpy(), name="irop_flag",
+                             index=pd.DatetimeIndex(ds, name="date"))
+    return daily, irop_by_date, out["profile"]
+
+
+def optimize_inputs(out_dir: Path = SPARK_OUT_DIR):
+    """(aht_by_bucket, aht_irop, deflectable_share) — as optimize._historical_aht_and_mix."""
+    out = load_outputs(out_dir)
+    s = out["scalars"]
+    return out["aht"]["aht_seconds"].to_numpy(), s["aht_irop"], s["deflectable_share"]
+
+
+def dashboard_inputs(out_dir: Path = SPARK_OUT_DIR):
+    """(daily_actual, reason_mix, aht_by_bucket, deflectable_share) — as dashboard's
+    _daily_actuals, _reason_mix and _aht_and_deflectable."""
+    out = load_outputs(out_dir)
+    d = out["daily"]
+    daily_actual = pd.Series(d["y"].to_numpy(), index=pd.Index(d["ds"], name="date"), name="actual")
+    return (daily_actual, out["reason_mix"], out["aht"]["aht_seconds"].to_numpy(),
+            out["scalars"]["deflectable_share"])
 
 
 def run_etl(csv_path: Path = RAW_CSV_PATH, parquet_path: Path = PARQUET_PATH,

@@ -107,3 +107,50 @@ aggregating from it takes 1.7–1.8 s against ~3 s per pandas stage that re-pars
   pyspark is missing or no Java runtime starts.
 - *Pandas path unaffected:* after Phase 1, `run_all.py` from a copy of the working tree still
   reproduces all 15 reproducible outputs byte for byte.
+
+## Phase 2 — Wire-in (`run_all.py --engine spark`)
+
+**What changed.**
+- **`run_all.py`** takes `--engine pandas|spark` (default `pandas`). The default runs the
+  original `STEPS` list, unchanged. `spark` inserts the Spark ETL after Phase 1 and passes
+  `engine="spark"` to forecast, optimize and dashboard. `pyspark` is imported only on the Spark
+  branch, so the pandas engine still needs neither pyspark nor Java.
+- **`forecast.py`, `optimize.py`, `dashboard.py`** each have one small input function
+  (`_history`, `_handle_time_inputs`, `_history_aggregates`). Its pandas branch is the original
+  code moved verbatim, including the original print messages. Its Spark branch reads the ETL
+  outputs. An unknown engine name raises `ValueError` rather than silently falling back to pandas.
+- **`spark_etl.py`** adds `forecast_inputs`, `optimize_inputs` and `dashboard_inputs`. They return
+  the Spark outputs shaped exactly like the pandas readers' return values: same columns, dtypes
+  and index names. Everything after a stage's input step is untouched.
+
+**Verification — full pipeline, both engines, each in a fresh scratch copy of the working tree**
+(regenerating `contacts.csv` from scratch):
+
+- **`forecast.csv` and `staffing_plan.csv` are byte-identical between engines**, and so is every
+  other CSV, JSON and PNG: 15 of 15 reproducible outputs. All 15 are also byte-identical to the
+  committed files.
+- `dashboard.html` and the deck are identical in content (div uuid masked / every zip member
+  equal). Their bytes differ per run on either engine, as in the baseline.
+- **No difference between Spark and pandas anywhere**, so there is nothing to explain.
+- The pandas engine's console output is identical to the pre-change baseline log (timings
+  masked).
+- End-to-end wall-clock: **33 s on both engines**.
+
+  | Engine | Raw-data work | Forecast / optimize / dashboard |
+  |---|---|---|
+  | pandas | spread across forecast 3 s, optimize 3 s, dashboard 4 s (each re-reads the CSV) | 3 s / 3 s / 4 s |
+  | spark | one Spark ETL step, 9 s | ~0 s each (they read 5 small files) |
+
+- New tests (3, in `tests/test_spark_parity.py`): what each stage receives on the Spark engine is
+  exactly equal (`check_exact`, dtypes, index names) to its pandas reader's return value.
+  Full suite: 35 passed in 24.6 s.
+
+**Things I was unsure about**
+
+- `run_all.py` still ends with "Run `pytest` to verify the three test suites" even though there
+  are now four test files. I left the pandas engine's output byte-for-byte as it was; the README
+  pass in Phase 4 can fix the wording if you want.
+- Individual stage modules don't take an `--engine` flag on the command line
+  (`python -m src.forecast` stays pandas). The Spark engine is reached through
+  `run_all.py --engine spark` or by calling `main(engine="spark")`, which is what the Airflow
+  tasks in Phase 3 will do.
