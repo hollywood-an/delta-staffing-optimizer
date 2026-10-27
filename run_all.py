@@ -11,7 +11,7 @@ Every step is seeded, so a fresh run reproduces the committed results:
   Phase 7  executive deck           -> outputs/Delta_Reservations_Capstone.pptx
 
 The Tableau Public dashboard is authored by hand from the Phase-6 CSVs
-(outputs/dashboard/TABLEAU_GUIDE.md). Afterwards, `pytest` runs the three test suites.
+(outputs/dashboard/TABLEAU_GUIDE.md). Afterwards, `pytest` runs the test suites.
 
 `--engine spark` adds a Spark ETL step after Phase 1 (src/spark_etl.py: contacts.csv -> Parquet ->
 aggregates) and the forecast, optimize and dashboard phases read its aggregates instead of
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> None:
         step()
         print(f"[{name}: {time.perf_counter() - t:.0f}s]")
     print(f"\nAll phases complete in {time.perf_counter() - start:.0f}s. "
-          f"Run `pytest` to verify the three test suites.")
+          f"Run `pytest` to verify the test suites.")
 
 
 if __name__ == "__main__":
