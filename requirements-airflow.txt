@@ -1,0 +1,11 @@
+# Airflow orchestration — installed into its OWN virtualenv (.venv-airflow), never the pipeline's
+# .venv: Airflow's constraints pin pandas==3.0.5, which would move the pipeline's pandas==3.0.3 pin
+# and could shift its outputs. The DAG's tasks run inside .venv, so the two never mix.
+#
+#   make airflow-install      (or:  python3.11 -m venv .venv-airflow &&
+#                                   .venv-airflow/bin/pip install -r requirements-airflow.txt)
+#
+# Exact pins: apache-airflow below, plus every transitive dependency via Airflow's official
+# constraints file for this exact release and Python 3.11 (an immutable git tag).
+-c https://raw.githubusercontent.com/apache/airflow/constraints-3.3.2/constraints-3.11.txt
+apache-airflow==3.3.2

@@ -98,7 +98,10 @@ def get_spark(app_name: str = "staffing-etl") -> SparkSession:
                .config("spark.ui.enabled", "false")
                .config("spark.ui.showConsoleProgress", "false")
                .config("spark.sql.shuffle.partitions", "8")
-               .config("spark.driver.memory", "2g"))
+               .config("spark.driver.memory", "2g")
+               # any Python worker uses this interpreter, not whatever `python3` is first on PATH
+               # (under Airflow that is .venv-airflow's, which has no pandas or pyspark)
+               .config("spark.pyspark.python", sys.executable))
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="PySpark does not yet fully support pandas",
                                 category=FutureWarning)

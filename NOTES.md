@@ -154,3 +154,114 @@ aggregating from it takes 1.7–1.8 s against ~3 s per pandas stage that re-pars
   (`python -m src.forecast` stays pandas). The Spark engine is reached through
   `run_all.py --engine spark` or by calling `main(engine="spark")`, which is what the Airflow
   tasks in Phase 3 will do.
+
+## Phase 3 — Airflow (`dags/staffing_pipeline.py`)
+
+**Install.** One attempt, and it succeeded: `apache-airflow==3.3.2` into its own
+`.venv-airflow` (Python 3.11.14), pinned by Airflow's official constraints file for 3.3.2 / Python
+3.11. That's 131 packages, `pip check` clean. No Prefect fallback was needed.
+`requirements-airflow.txt` is the exact file used for the install. Airflow stays out of the
+pipeline's `.venv` because its constraints pin `pandas==3.0.5` (the pipeline pins 3.0.3).
+
+**The DAG** — one task per stage, all on the Spark engine:
+
+```
+generate_data ──► spark_etl ──► forecast ──► optimize ──► dashboard ──► build_deck
+                              erlang_check ──┘                             ▲
+                              simulate ────────────────────────────────────┘
+```
+
+- **Main chain:** each task reads what the previous one wrote: contacts.csv → Spark aggregates →
+  forecast.csv → staffing_plan.csv → dashboard CSVs → deck.
+- **`erlang_check`** prints the spec's verified Erlang C table and fails the run if
+  `agents_required(5, 180, 20, 0.80)` is no longer 8. It gates `optimize`.
+- **`simulate`** needs no data, so it starts immediately. `build_deck` waits for it because the
+  deck reads `validation.csv`.
+- **How tasks run:** every task is `@task.external_python` pointed at the project's
+  `.venv/bin/python`. The task body imports the stage module and calls its existing entry point
+  (`generate_data.main`, `spark_etl.run`, `forecast.main(engine="spark")`, …). Airflow and the
+  pipeline never share an environment. Set `STAFFING_PYTHON` to use another interpreter.
+- **Run settings:** `schedule=None` (on demand), `retries=0` (failures surface),
+  `max_active_runs=1` (every run rewrites the same files).
+
+**Start it, trigger a run, find the logs**
+
+```bash
+make airflow-install   # once: .venv-airflow + pinned Airflow + its SQLite DB in ./airflow_home
+make airflow-up        # terminal 1: scheduler + API server + DAG processor + triggerer
+                       #   UI → http://localhost:8080, user "admin"; the generated password is in
+                       #   airflow_home/simple_auth_manager_passwords.json.generated
+make airflow-trigger   # terminal 2: unpause + trigger staffing_pipeline (or the UI's ▶ Trigger)
+make airflow-test      # alternative: run every task once in this terminal, no scheduler/UI
+```
+
+- **Task logs:** `airflow_home/logs/dag_id=staffing_pipeline/run_id=<run>/task_id=<task>/attempt=<n>.log`.
+  Each file holds that stage's full console output (e.g. the Spark ETL summary, the savings
+  table). The same logs show in the UI: click a task, then the Logs tab.
+- **Outputs** land in the repo exactly where `run_all.py` writes them. Afterwards `git status`
+  shows `dashboard.html` and the `.pptx` as modified: their content is identical and only the
+  per-run div id and zip timestamps differ (see Baseline). `git checkout -- <file>` restores them.
+- All Airflow state lives in `airflow_home/` (git-ignored). Delete it for a clean slate.
+
+**What the graph looks like in the UI (Graph view, after a run).**
+- Eight green boxes, all `@task.external_python`. Three start on the left: `generate_data` on
+  top, `erlang_check` and `simulate` below it.
+- The spine runs left to right: `generate_data → spark_etl → forecast → optimize → dashboard →
+  build_deck`.
+- `erlang_check` joins the spine from below at `optimize`, a gate before any staffing is sized.
+- `simulate` runs along the bottom the whole width and joins at `build_deck`, so the deck node
+  has two arrows in.
+- The Gantt view of the measured run (below) is the most telling picture: three bars start
+  together at 0 s, the long `spark_etl` bar follows `generate_data`, then four short bars step
+  down to the end.
+
+**Verification**
+
+| Run | How | Result | Wall-clock |
+|---|---|---|---:|
+| 1 | `make airflow-test` (in-process, tasks one after another) | 8/8 success | 40.8 s |
+| 2 | `make airflow-up` + `make airflow-trigger` (scheduler, LocalExecutor) | 8/8 success | 38.2 s |
+| 3 | same, after binding the UI to 127.0.0.1 | 8/8 success | 37.0 s |
+
+Per-task timing in run 2. The first three ran in parallel; Airflow adds ~0.2–0.6 s between
+dependent tasks.
+
+| Task | Starts at | Duration |
+|---|---:|---:|
+| erlang_check | 0.0 s | 1.9 s |
+| simulate | 0.0 s | 13.3 s |
+| generate_data | 0.0 s | 15.7 s |
+| spark_etl | 16.2 s | 12.8 s |
+| forecast | 29.1 s | 2.0 s |
+| optimize | 31.2 s | 1.8 s |
+| dashboard | 33.2 s | 1.4 s |
+| build_deck | 35.2 s | 1.2 s |
+
+After the runs, all 15 reproducible outputs in the repo were byte-identical to the committed
+files (`git status` clean for them). `dashboard.html` and the deck were content-identical and
+were restored with `git checkout`.
+
+**Problems the live runs found (fixed)**
+
+1. **`airflow standalone` died with `FileNotFoundError: 'airflow'`.** It launches its components
+   by running `airflow`, so the venv's `bin/` must be on PATH. `make airflow-up` now prepends it
+   for that one command. (`airflow dags test` didn't need it, which is why run 1 passed first.)
+2. **The UI listened on every network interface (`*:8080`)** — Airflow's default `0.0.0.0` — and
+   the API server logged a "deployment shape looks like production" warning. The Makefile now
+   sets `AIRFLOW__API__HOST=127.0.0.1`. Verified: listening on `127.0.0.1:8080` only, the
+   warning is gone, and run 3 shows tasks still reach the API.
+3. **Hardening:** with the Airflow venv first on PATH, `python3` means *its* interpreter, which
+   has no pandas or pyspark. The ETL never starts Python workers (no UDFs), but `get_spark()` now
+   pins `spark.pyspark.python` to the driver's own interpreter so it never could.
+
+**Things I was unsure about**
+
+- The two macOS settings in the Makefile (`OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES`,
+  `no_proxy=*`) are the standard Airflow-on-macOS workarounds for crashes in forked task
+  processes. I set them up front and did not test whether this machine needs them.
+- The CLI prints "You might need to install the graphviz package" on every command. That only
+  matters for `airflow dags show` (rendering the graph to an image), which isn't used. I didn't
+  add graphviz.
+- SimpleAuthManager (Airflow 3's default) stores the generated admin password in plain text in
+  `airflow_home/` (git-ignored). Fine for a laptop bound to localhost, not for a server.
+
