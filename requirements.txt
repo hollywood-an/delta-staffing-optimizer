@@ -23,3 +23,7 @@ plotly==6.8.0
 
 # Phase 7 — executive deck generator.
 python-pptx==1.0.2
+
+# Spark ETL path (src/spark_etl.py) — needs a Java runtime on PATH or JAVA_HOME (tested: JDK 25).
+pyspark==4.2.0
+py4j==0.10.9.9          # pyspark's Python<->JVM bridge (its only dependency) — pinned too
